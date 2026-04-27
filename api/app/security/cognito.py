@@ -1,4 +1,5 @@
 from typing import Any
+from uuid import UUID
 
 import httpx
 from fastapi import Depends, Header, HTTPException, status
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db.models import User
 from app.db.session import get_db
+from app.security.jwt_self import verify_token as verify_self_token
 
 _jwks_cache: dict[str, Any] | None = None
 
@@ -66,8 +68,23 @@ async def get_current_user(
     if authorization is None or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1]
-    claims = await verify_cognito_token(token)
 
+    # Try our own HS256 JWT first (issued by /auth/login). Fall back to
+    # Cognito JWT verification only if cognito_jwks_url is configured.
+    try:
+        claims = verify_self_token(token)
+        user = (await db.execute(select(User).where(User.id == UUID(claims["sub"])))).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=401, detail="User no longer exists")
+        return user
+    except ValueError:
+        pass
+
+    settings = get_settings()
+    if not settings.cognito_jwks_url:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    claims = await verify_cognito_token(token)
     result = await db.execute(select(User).where(User.cognito_sub == claims["sub"]))
     user = result.scalar_one_or_none()
     if user is None:

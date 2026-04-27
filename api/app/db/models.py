@@ -36,8 +36,11 @@ class User(Base):
         default=uuid4,
         server_default=sa.text("gen_random_uuid()"),
     )
-    cognito_sub: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    cognito_sub: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     email: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

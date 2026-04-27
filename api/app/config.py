@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     digest_hour_local: int = Field(default=8, ge=0, le=23)
     digest_timezone: str = Field(default="America/Sao_Paulo")
     digest_enabled: bool = Field(default=True)
+    retention_days_clips: int = Field(default=30, ge=1)
+    retention_days_alerts: int = Field(default=90, ge=1)
 
 
 @lru_cache

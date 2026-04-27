@@ -1,7 +1,20 @@
 import { useEffect, useState } from "react";
-import { Alert, AlertFilters, Camera, Rule, listAlerts, listCameras, listRules, openAlertStream } from "./api";
+import {
+  Alert,
+  AlertFilters,
+  AuthUser,
+  Camera,
+  Rule,
+  fetchMe,
+  listAlerts,
+  listCameras,
+  listRules,
+  openAlertStream,
+  setToken,
+} from "./api";
 import { AlertCard } from "./components/AlertCard";
 import { AlertsFilters, ClientFilters, filterAlertsClient } from "./components/AlertsFilters";
+import { AuthScreen } from "./components/AuthScreen";
 import { CamerasPanel } from "./components/CamerasPanel";
 import { RulesPanel } from "./components/RulesPanel";
 import { SubscribersPanel } from "./components/SubscribersPanel";
@@ -9,6 +22,22 @@ import { SubscribersPanel } from "./components/SubscribersPanel";
 type Tab = "alerts" | "cameras" | "rules" | "subscribers";
 
 export function App() {
+  const [user, setUser] = useState<AuthUser | null | undefined>(undefined);
+
+  useEffect(() => {
+    fetchMe().then((u) => setUser(u)).catch(() => setUser(null));
+  }, []);
+
+  if (user === undefined) {
+    return <div className="auth-wrap"><p>Carregando…</p></div>;
+  }
+  if (user === null) {
+    return <AuthScreen onAuthed={setUser} />;
+  }
+  return <Authenticated user={user} onLogout={() => { setToken(null); setUser(null); }} />;
+}
+
+function Authenticated({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("alerts");
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [cameras, setCameras] = useState<Camera[]>([]);
@@ -67,7 +96,7 @@ export function App() {
     <div className="app">
       <header>
         <h1>cams-erp</h1>
-        <nav>
+        <nav style={{ flex: 1 }}>
           <button className={tab === "alerts" ? "active" : ""} onClick={() => setTab("alerts")}>
             Alertas {visible.length > 0 && <span className="badge">{visible.length}</span>}
           </button>
@@ -85,6 +114,12 @@ export function App() {
           className={`ws-dot ${wsConnected ? "ok" : "off"}`}
           title={wsConnected ? "WS conectado" : "aguardando"}
         />
+        <span className="user-chip" title={user.email}>
+          {user.name || user.email}
+          <button onClick={onLogout} className="link-btn" style={{ marginLeft: 8 }}>
+            sair
+          </button>
+        </span>
       </header>
 
       <main>

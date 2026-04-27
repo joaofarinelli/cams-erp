@@ -54,6 +54,90 @@ export type WSAlert = {
 
 const BASE = "/api";
 
+// ---- Auth ----
+const TOKEN_KEY = "cams.auth.token";
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token: string | null): void {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const t = getToken();
+  return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
+}
+
+export type AuthUser = { id: string; email: string; name: string | null; email_verified: boolean };
+
+export async function signup(input: { email: string; password: string; name?: string }): Promise<{
+  access_token: string;
+  user: AuthUser;
+}> {
+  const r = await fetch(`${BASE}/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!r.ok) throw new Error(`signup ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+export async function login(input: { email: string; password: string }): Promise<{
+  access_token: string;
+  user: AuthUser;
+}> {
+  const r = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!r.ok) throw new Error(`login ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+export async function fetchMe(): Promise<AuthUser | null> {
+  if (!getToken()) return null;
+  const r = await fetch(`${BASE}/auth/me`, { headers: authHeaders() });
+  if (r.status === 401) {
+    setToken(null);
+    return null;
+  }
+  if (!r.ok) throw new Error(`me ${r.status}`);
+  return r.json();
+}
+
+export async function deleteMyAccount(): Promise<void> {
+  const r = await fetch(`${BASE}/me`, { method: "DELETE", headers: authHeaders() });
+  if (!r.ok) throw new Error(`delete-me ${r.status}`);
+  setToken(null);
+}
+
+export async function exportMyData(): Promise<unknown> {
+  const r = await fetch(`${BASE}/me/export`, { headers: authHeaders() });
+  if (!r.ok) throw new Error(`export ${r.status}`);
+  return r.json();
+}
+
+// Wrap fetch so every API call carries the bearer when present. Same-origin
+// thanks to the Vite proxy.
+const _origFetch = window.fetch.bind(window);
+window.fetch = function (input: RequestInfo | URL, init: RequestInit = {}) {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (url.startsWith(BASE) || url.startsWith(window.location.origin + BASE)) {
+    const headers = new Headers(init.headers || {});
+    if (!headers.has("Authorization")) {
+      const t = getToken();
+      if (t) headers.set("Authorization", `Bearer ${t}`);
+    }
+    init = { ...init, headers };
+  }
+  return _origFetch(input, init);
+} as typeof fetch;
+
 export async function listCameras(): Promise<Camera[]> {
   const r = await fetch(`${BASE}/cameras`);
   if (!r.ok) throw new Error(`cameras GET ${r.status}`);
