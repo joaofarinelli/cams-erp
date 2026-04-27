@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Subscriber, createSubscriber, deleteSubscriber, listSubscribers } from "../api";
+import { Subscriber, createSubscriber, deleteSubscriber, listSubscribers, runDigestNow } from "../api";
 
 export function SubscribersPanel() {
   const [subs, setSubs] = useState<Subscriber[]>([]);
@@ -64,6 +64,26 @@ export function SubscribersPanel() {
           {busy ? "Salvando…" : "Adicionar"}
         </button>
       </form>
+
+      <h2>Resumo diário</h2>
+      <p className="muted">
+        Enviado automaticamente todo dia às 08h00 (America/Sao_Paulo). Inclui top alertas das
+        últimas 24h agrupados por regra.
+      </p>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            const r = await runDigestNow();
+            alert(r.sent ? "Resumo enviado." : "Sem inscritos.");
+          } catch (e) {
+            alert(String(e));
+          }
+        }}
+        style={{ background: "#06a", color: "#fff", border: 0, padding: "0.5rem 1rem", borderRadius: 4, cursor: "pointer", marginBottom: "1rem" }}
+      >
+        Enviar resumo agora
+      </button>
 
       <h2>Inscritos ({subs.length})</h2>
       <ul className="rule-list">

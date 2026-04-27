@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     evolution_api_key: str = Field(default="")
     evolution_instance: str = Field(default="cams-erp")
     expo_push_url: str = Field(default="https://exp.host/--/api/v2/push/send")
+    digest_hour_local: int = Field(default=8, ge=0, le=23)
+    digest_timezone: str = Field(default="America/Sao_Paulo")
+    digest_enabled: bool = Field(default=True)
 
 
 @lru_cache

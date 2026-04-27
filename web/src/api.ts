@@ -152,6 +152,12 @@ export async function deleteSubscriber(id: string): Promise<void> {
   if (!r.ok) throw new Error(`subscribers DELETE ${r.status}`);
 }
 
+export async function runDigestNow(): Promise<{ sent: boolean }> {
+  const r = await fetch(`${BASE}/digest/run-now`, { method: "POST" });
+  if (!r.ok) throw new Error(`digest POST ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
 export function clipUrl(s3_key: string): string {
   return `${BASE}/dev/s3/${s3_key}`;
 }

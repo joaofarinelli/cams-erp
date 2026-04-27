@@ -1,8 +1,29 @@
+import asyncio
+from contextlib import asynccontextmanager
+
 import sentry_sdk
 from fastapi import FastAPI
 
 from app.config import get_settings
-from app.routers import agent, alerts, cameras, clips, events, pairing, rules, subscribers
+from app.routers import agent, alerts, cameras, clips, digest as digest_router, events, pairing, rules, subscribers
+from app.services.digest import digest_scheduler
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    task: asyncio.Task | None = None
+    if settings.digest_enabled:
+        task = asyncio.create_task(digest_scheduler(), name="digest_scheduler")
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, BaseException):
+                pass
 
 
 def create_app() -> FastAPI:
@@ -14,7 +35,7 @@ def create_app() -> FastAPI:
             traces_sample_rate=0.1,
         )
 
-    app = FastAPI(title="cams-erp API", version="0.1.0")
+    app = FastAPI(title="cams-erp API", version="0.1.0", lifespan=lifespan)
     app.include_router(cameras.router)
     app.include_router(pairing.router)
     app.include_router(rules.router)
@@ -23,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(alerts.router)
     app.include_router(agent.router)
     app.include_router(subscribers.router)
+    app.include_router(digest_router.router)
     if settings.auth_bypass:
         from app.routers import dev_storage
 
