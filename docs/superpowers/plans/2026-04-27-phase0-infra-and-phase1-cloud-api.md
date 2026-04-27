@@ -161,12 +161,13 @@ git commit -m "chore: initialize cams-erp mono-repo skeleton"
 gh repo create cams-erp --private --source=. --remote=origin --push
 ```
 
-- [ ] **Step 2: Set branch protection on main**
+- [ ] **Step 2: Set branch protection on main** (DEFERRED — requires GitHub Pro for private repos; user accepted risk for solo MVP. Re-enable when upgrading to GitHub Pro or moving to an org/team plan.)
 
 ```bash
+# Run after GitHub Pro upgrade:
 gh api -X PUT /repos/:owner/cams-erp/branches/main/protection \
   -f required_status_checks='{"strict":true,"contexts":[]}' \
-  -f enforce_admins=false \
+  -F enforce_admins=false \
   -f required_pull_request_reviews='{"required_approving_review_count":1}' \
   -f restrictions=null
 ```
