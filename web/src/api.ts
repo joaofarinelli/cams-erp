@@ -62,8 +62,21 @@ export async function listRules(): Promise<Rule[]> {
   return r.json();
 }
 
-export async function listAlerts(): Promise<Alert[]> {
-  const r = await fetch(`${BASE}/alerts`);
+export type AlertFilters = {
+  camera_id?: string;
+  preset_type?: Rule["preset_type"];
+  since?: string; // ISO datetime
+  limit?: number;
+};
+
+export async function listAlerts(filters: AlertFilters = {}): Promise<Alert[]> {
+  const params = new URLSearchParams();
+  if (filters.camera_id) params.set("camera_id", filters.camera_id);
+  if (filters.preset_type) params.set("preset_type", filters.preset_type);
+  if (filters.since) params.set("since", filters.since);
+  if (filters.limit) params.set("limit", String(filters.limit));
+  const qs = params.toString();
+  const r = await fetch(`${BASE}/alerts${qs ? `?${qs}` : ""}`);
   if (!r.ok) throw new Error(`alerts GET ${r.status}`);
   return r.json();
 }
@@ -82,6 +95,24 @@ export async function createRule(input: {
   });
   if (!r.ok) throw new Error(`rules POST ${r.status}: ${await r.text()}`);
   return r.json();
+}
+
+export async function updateRule(
+  ruleId: string,
+  patch: Partial<Pick<Rule, "name" | "enabled" | "zones" | "sensitivity" | "cooldown_seconds" | "custom_prompt">>
+): Promise<Rule> {
+  const r = await fetch(`${BASE}/rules/${ruleId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error(`rules PUT ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+export async function deleteRule(ruleId: string): Promise<void> {
+  const r = await fetch(`${BASE}/rules/${ruleId}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`rules DELETE ${r.status}`);
 }
 
 export async function postAlertFeedback(alertId: string, isFalsePositive: boolean): Promise<Alert> {
