@@ -91,7 +91,6 @@ agent/bin/
 infra/.terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl
 
 # IDE
 .idea/
