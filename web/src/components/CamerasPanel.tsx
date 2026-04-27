@@ -1,14 +1,40 @@
 import { useState } from "react";
 import { Camera, Rule, thumbUrl } from "../api";
+import { CameraWizard } from "./CameraWizard";
 
-export function CamerasPanel({ cameras, rules }: { cameras: Camera[]; rules: Rule[] }) {
+export function CamerasPanel({
+  cameras,
+  rules,
+  onChange,
+}: {
+  cameras: Camera[];
+  rules: Rule[];
+  onChange?: () => void;
+}) {
+  const [showWizard, setShowWizard] = useState(false);
   return (
-    <section className="cameras">
-      {cameras.length === 0 && <p className="empty">Nenhuma câmera cadastrada.</p>}
-      {cameras.map((c) => {
-        const camRules = rules.filter((r) => r.camera_id === c.id);
-        return <CameraCard key={c.id} cam={c} rules={camRules} />;
-      })}
+    <section>
+      {!showWizard && (
+        <button className="btn-primary" onClick={() => setShowWizard(true)}>
+          + Adicionar câmera
+        </button>
+      )}
+      {showWizard && (
+        <CameraWizard
+          onCancel={() => setShowWizard(false)}
+          onDone={() => {
+            setShowWizard(false);
+            onChange?.();
+          }}
+        />
+      )}
+      <div className="cameras">
+        {cameras.length === 0 && <p className="empty">Nenhuma câmera cadastrada.</p>}
+        {cameras.map((c) => {
+          const camRules = rules.filter((r) => r.camera_id === c.id);
+          return <CameraCard key={c.id} cam={c} rules={camRules} />;
+        })}
+      </div>
     </section>
   );
 }

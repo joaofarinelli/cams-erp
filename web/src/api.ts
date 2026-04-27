@@ -123,6 +123,80 @@ export async function postAlertFeedback(alertId: string, isFalsePositive: boolea
   return r.json();
 }
 
+export type Device = { id: string; name: string; paired: boolean };
+
+export async function listDevices(): Promise<Device[]> {
+  const r = await fetch(`${BASE}/devices`);
+  if (!r.ok) throw new Error(`devices GET ${r.status}`);
+  return r.json();
+}
+
+export async function createPairCode(): Promise<{
+  pair_code: string;
+  expires_at: string;
+  device_id: string;
+}> {
+  const r = await fetch(`${BASE}/pair/code`, { method: "POST" });
+  if (!r.ok) throw new Error(`pair/code ${r.status}`);
+  return r.json();
+}
+
+export type DiscoveredDevice = {
+  ip: string;
+  name: string | null;
+  vendor: string | null;
+  xaddrs: string[];
+  url_templates: { label: string; url: string }[];
+};
+
+export async function discoverCameras(): Promise<DiscoveredDevice[]> {
+  const r = await fetch(`${BASE}/onboarding/cameras/discover`, { method: "POST" });
+  if (!r.ok) throw new Error(`discover ${r.status}`);
+  return (await r.json()).devices;
+}
+
+export type Templates = Record<string, { label: string; url: string }[]>;
+
+export async function fetchTemplates(): Promise<Templates> {
+  const r = await fetch(`${BASE}/onboarding/cameras/templates`);
+  if (!r.ok) throw new Error(`templates ${r.status}`);
+  return (await r.json()).vendors;
+}
+
+export type ProbeResult = {
+  ok: boolean;
+  codec: string | null;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  error: string | null;
+  preview_data_url: string | null;
+};
+
+export async function probeStream(rtsp_url: string): Promise<ProbeResult> {
+  const r = await fetch(`${BASE}/onboarding/cameras/probe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rtsp_url, include_frame: true }),
+  });
+  if (!r.ok) throw new Error(`probe ${r.status}`);
+  return r.json();
+}
+
+export async function createCamera(input: {
+  name: string;
+  rtsp_url: string;
+  device_id: string;
+}): Promise<Camera> {
+  const r = await fetch(`${BASE}/cameras`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!r.ok) throw new Error(`cameras POST ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
 export type Subscriber = {
   id: string;
   kind: "whatsapp" | "expo_push";

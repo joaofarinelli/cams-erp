@@ -1,7 +1,9 @@
 import secrets
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,27 @@ from app.security.cognito import get_current_user
 from app.security.device_auth import generate_device_token, hash_device_token
 
 router = APIRouter(prefix="/pair", tags=["pair"])
+
+
+class DeviceOut(BaseModel):
+    id: UUID
+    name: str
+    paired: bool
+
+
+devices_router = APIRouter(prefix="/devices", tags=["devices"])
+
+
+@devices_router.get("", response_model=list[DeviceOut])
+async def list_devices(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DeviceOut]:
+    result = await db.execute(select(Device).where(Device.owner_id == user.id))
+    return [
+        DeviceOut(id=d.id, name=d.name, paired=d.device_token_hash is not None)
+        for d in result.scalars().all()
+    ]
 
 
 @router.post("/code", response_model=PairCodeOut, status_code=201)

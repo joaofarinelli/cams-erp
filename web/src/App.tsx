@@ -105,7 +105,7 @@ export function App() {
             </section>
           </>
         )}
-        {tab === "cameras" && <CamerasPanel cameras={cameras} rules={rules} />}
+        {tab === "cameras" && <CamerasPanel cameras={cameras} rules={rules} onChange={() => refreshAll()} />}
         {tab === "rules" && <RulesPanel cameras={cameras} rules={rules} onChange={() => refreshAll()} />}
         {tab === "subscribers" && <SubscribersPanel />}
       </main>

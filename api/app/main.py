@@ -5,7 +5,7 @@ import sentry_sdk
 from fastapi import FastAPI
 
 from app.config import get_settings
-from app.routers import agent, alerts, cameras, clips, digest as digest_router, events, pairing, rules, subscribers
+from app.routers import agent, alerts, cameras, clips, digest as digest_router, events, onboarding, pairing, rules, subscribers
 from app.services.digest import digest_scheduler
 
 
@@ -38,6 +38,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="cams-erp API", version="0.1.0", lifespan=lifespan)
     app.include_router(cameras.router)
     app.include_router(pairing.router)
+    app.include_router(pairing.devices_router)
     app.include_router(rules.router)
     app.include_router(clips.router)
     app.include_router(events.router)
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(agent.router)
     app.include_router(subscribers.router)
     app.include_router(digest_router.router)
+    app.include_router(onboarding.router)
     if settings.auth_bypass:
         from app.routers import dev_storage
 
