@@ -2,6 +2,7 @@ import sentry_sdk
 from fastapi import FastAPI
 
 from app.config import get_settings
+from app.routers import cameras
 
 
 def create_app() -> FastAPI:
@@ -14,6 +15,7 @@ def create_app() -> FastAPI:
         )
 
     app = FastAPI(title="cams-erp API", version="0.1.0")
+    app.include_router(cameras.router)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
