@@ -1,0 +1,53 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f6f7f9; color: #222; }
+.app { max-width: 1100px; margin: 0 auto; padding: 1rem; }
+
+header { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0 1rem; border-bottom: 1px solid #ddd; }
+header h1 { margin: 0; font-size: 1.4rem; }
+header nav { display: flex; gap: 0.25rem; flex: 1; }
+header nav button { background: transparent; border: 1px solid transparent; padding: 0.4rem 0.8rem; border-radius: 6px; cursor: pointer; }
+header nav button.active { background: #fff; border-color: #ccc; }
+header nav .badge { display: inline-block; background: #d33; color: #fff; padding: 0 0.4rem; margin-left: 0.4rem; border-radius: 999px; font-size: 0.75rem; }
+
+.ws-dot { width: 10px; height: 10px; border-radius: 50%; background: #888; }
+.ws-dot.ok { background: #2a2; }
+.ws-dot.off { background: #ccc; }
+
+main { padding: 1rem 0; }
+
+.empty { color: #888; text-align: center; padding: 2rem; }
+
+.alerts { display: grid; gap: 1rem; }
+
+.alert-card { display: grid; grid-template-columns: 320px 1fr; gap: 1rem; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem; }
+.alert-card video { width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 4px; }
+.alert-card .alert-body { display: flex; flex-direction: column; gap: 0.5rem; }
+.alert-card header { display: flex; align-items: center; gap: 0.75rem; padding: 0; border: none; }
+.alert-card .score { font-variant-numeric: tabular-nums; }
+.alert-card .status { font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 999px; background: #eee; }
+.alert-card .status.pending { background: #fed; color: #a60; }
+.alert-card .status.seen { background: #def; color: #06a; }
+.alert-card .status.false_positive { background: #efe; color: #060; }
+.alert-card p { margin: 0; flex: 1; }
+.alert-card footer { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.alert-card button { padding: 0.3rem 0.6rem; border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; margin-left: 0.25rem; }
+
+.cameras { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
+.camera-card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem; }
+.camera-card header { padding: 0; border: none; gap: 0.5rem; }
+.camera-card ul { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+.camera-card li { padding: 0.2rem 0; font-size: 0.9rem; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; }
+.status-dot.online { background: #2a2; }
+.status-dot.offline { background: #aaa; }
+
+.rules { display: grid; gap: 1rem; }
+.rule-form { display: grid; gap: 0.5rem; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1rem; max-width: 600px; }
+.rule-form label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
+.rule-form input, .rule-form select, .rule-form textarea { padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px; font: inherit; }
+.rule-form button { padding: 0.5rem 1rem; background: #06a; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
+.rule-form .error { color: #d33; }
+
+.rule-list { list-style: none; padding: 0; }
+.rule-list li { padding: 0.4rem 0; border-bottom: 1px solid #eee; }
+.muted { color: #888; }
