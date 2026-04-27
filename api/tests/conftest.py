@@ -14,6 +14,7 @@ from app.db.models import Camera, Device, User
 from app.db.session import SessionLocal, get_db
 from app.main import create_app
 from app.security.cognito import get_current_user
+from app.security.device_auth import get_current_device
 
 
 @pytest.fixture
@@ -78,6 +79,26 @@ async def auth_client(seed_user, db_session) -> AsyncClient:
             yield session
 
     app.dependency_overrides[get_current_user] = override_user
+    app.dependency_overrides[get_db] = override_get_db
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+
+
+@pytest_asyncio.fixture
+async def device_client(db_session, seed_device) -> AsyncClient:
+    app = create_app()
+
+    async def override_device() -> Device:
+        return seed_device
+
+    session_local = db_session.info["session_local"]
+
+    async def override_get_db():
+        async with session_local() as session:
+            yield session
+
+    app.dependency_overrides[get_current_device] = override_device
     app.dependency_overrides[get_db] = override_get_db
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
