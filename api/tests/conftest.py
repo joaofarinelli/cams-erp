@@ -73,3 +73,19 @@ async def auth_client(seed_user, db_session) -> AsyncClient:
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
+
+
+@pytest_asyncio.fixture
+async def anon_client(db_session) -> AsyncClient:
+    app = create_app()
+
+    session_local = db_session.info["session_local"]
+
+    async def override_get_db():
+        async with session_local() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
