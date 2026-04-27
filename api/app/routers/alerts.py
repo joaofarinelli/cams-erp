@@ -54,6 +54,7 @@ async def list_alerts(
         AlertOut(
             id=a.id,
             rule_id=a.rule_id,
+            rule_name=r.name,
             event_id=a.event_id,
             camera_id=r.camera_id,
             preset_type=r.preset_type,
@@ -92,6 +93,7 @@ async def feedback(
     return AlertOut(
         id=a.id,
         rule_id=a.rule_id,
+        rule_name=r.name,
         event_id=a.event_id,
         camera_id=r.camera_id,
         preset_type=r.preset_type,
@@ -144,6 +146,7 @@ async def create_internal_alert(
             "type": "alert",
             "id": str(alert.id),
             "rule_id": str(rule.id),
+            "rule_name": rule.name,
             "camera_id": str(camera.id),
             "preset_type": rule.preset_type.value,
             "score": payload.score,

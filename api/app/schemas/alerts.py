@@ -9,6 +9,7 @@ from app.db.models import AlertStatus, PresetType
 class AlertOut(BaseModel):
     id: UUID
     rule_id: UUID
+    rule_name: str | None = None
     event_id: UUID
     camera_id: UUID
     preset_type: PresetType

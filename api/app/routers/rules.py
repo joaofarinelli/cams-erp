@@ -36,6 +36,7 @@ async def create_rule(
     rule = Rule(
         camera_id=payload.camera_id,
         preset_type=payload.preset_type,
+        name=payload.name,
         enabled=payload.enabled,
         zones=payload.zones,
         sensitivity=payload.sensitivity,
@@ -67,7 +68,7 @@ async def update_rule(
     db: AsyncSession = Depends(get_db),
 ) -> Rule:
     rule = await _owned_rule(rule_id, user, db)
-    for field in ("enabled", "zones", "sensitivity", "cooldown_seconds", "custom_prompt"):
+    for field in ("name", "enabled", "zones", "sensitivity", "cooldown_seconds", "custom_prompt"):
         v = getattr(payload, field)
         if v is not None:
             setattr(rule, field, v)
