@@ -2,14 +2,23 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.db.models import Alert, AlertStatus, Camera, Device, Event, PresetType, Rule, User
 from app.db.session import get_db
 from app.schemas.alerts import AlertOut
 from app.security.cognito import get_current_user
 from app.services.pubsub import broker
+
+
+class InternalAlertCreate(BaseModel):
+    rule_id: UUID
+    event_id: UUID
+    score: float = Field(ge=0.0, le=1.0)
+    message: str = Field(min_length=1, max_length=512)
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -92,6 +101,57 @@ async def feedback(
         s3_key=e.s3_key,
         created_at=a.created_at,
     )
+
+
+@router.post("/_internal", status_code=201)
+async def create_internal_alert(
+    payload: InternalAlertCreate,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Inference-worker entrypoint. Persists the Alert and publishes to the
+    in-process broker so connected mobile WS clients receive a push.
+
+    Gated by CAMS_AUTH_BYPASS so it can't be called from the public internet
+    in a dev tunnel. In production, replace with mTLS or an internal-only
+    network path."""
+    if not get_settings().auth_bypass:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+
+    stmt = (
+        select(Rule, Camera, Device)
+        .join(Camera, Rule.camera_id == Camera.id)
+        .join(Device, Camera.device_id == Device.id)
+        .where(Rule.id == payload.rule_id)
+    )
+    row = (await db.execute(stmt)).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Rule not found")
+    rule, camera, device = row
+
+    alert = Alert(
+        rule_id=payload.rule_id,
+        event_id=payload.event_id,
+        score=payload.score,
+        message=payload.message,
+    )
+    db.add(alert)
+    await db.commit()
+    await db.refresh(alert)
+
+    await broker.publish(
+        device.owner_id,
+        {
+            "type": "alert",
+            "id": str(alert.id),
+            "rule_id": str(rule.id),
+            "camera_id": str(camera.id),
+            "preset_type": rule.preset_type.value,
+            "score": payload.score,
+            "message": payload.message,
+            "created_at": alert.created_at.isoformat(),
+        },
+    )
+    return {"id": str(alert.id)}
 
 
 @router.websocket("/stream")
