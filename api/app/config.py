@@ -1,11 +1,21 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Resolve relative to this file so the API picks up the env file regardless
+# of cwd. Order: repo-root .env first (lowest priority), then api/.env, then
+# real env vars (highest priority).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="CAMS_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="CAMS_",
+        env_file=(str(_REPO_ROOT / ".env"), ".env"),
+        extra="ignore",
+    )
 
     env: str = Field(default="dev")
     database_url: str = Field(default="postgresql+psycopg://postgres:postgres@localhost/camserp")
