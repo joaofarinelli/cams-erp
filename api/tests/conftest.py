@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.config import get_settings
 from app.db.base import Base
-from app.db.models import Device, User
+from app.db.models import Camera, Device, User
 from app.db.session import SessionLocal, get_db
 from app.main import create_app
 from app.security.cognito import get_current_user
@@ -53,6 +53,15 @@ async def seed_device(db_session, seed_user) -> Device:
     await db_session.commit()
     await db_session.refresh(device)
     return device
+
+
+@pytest_asyncio.fixture
+async def seed_camera(db_session, seed_device) -> Camera:
+    cam = Camera(device_id=seed_device.id, name="C1", rtsp_url_encrypted="ZGV2OnRlc3Q=")
+    db_session.add(cam)
+    await db_session.commit()
+    await db_session.refresh(cam)
+    return cam
 
 
 @pytest_asyncio.fixture
