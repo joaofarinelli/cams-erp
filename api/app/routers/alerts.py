@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,7 @@ from app.db.models import Alert, AlertStatus, Camera, Device, Event, PresetType,
 from app.db.session import get_db
 from app.schemas.alerts import AlertOut
 from app.security.cognito import get_current_user
+from app.services.pubsub import broker
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -91,3 +92,17 @@ async def feedback(
         s3_key=e.s3_key,
         created_at=a.created_at,
     )
+
+
+@router.websocket("/stream")
+async def alerts_stream(ws: WebSocket, user: User = Depends(get_current_user)) -> None:
+    await ws.accept()
+    q = await broker.subscribe(user.id)
+    try:
+        while True:
+            payload = await q.get()
+            await ws.send_json(payload)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await broker.unsubscribe(user.id, q)
