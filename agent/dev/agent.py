@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -100,18 +101,39 @@ def upload_clip(upload_url: str, path: Path) -> None:
 
 
 def record_clip(cap: cv2.VideoCapture, fps: float, size: tuple[int, int], seconds: int) -> Path:
+    """Pipe raw BGR frames into ffmpeg, encode H.264 with +faststart so the
+    resulting MP4 plays natively in <video> tags (browsers reject mp4v)."""
     tmp = Path(tempfile.mkstemp(suffix=".mp4")[1])
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(tmp), fourcc, fps, size)
+    width, height = size
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-loglevel", "error",
+        "-f", "rawvideo",
+        "-pix_fmt", "bgr24",
+        "-s", f"{width}x{height}",
+        "-r", f"{fps:.2f}",
+        "-i", "-",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        str(tmp),
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    assert proc.stdin is not None
     target_frames = int(fps * seconds)
     written = 0
-    while written < target_frames:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        writer.write(frame)
-        written += 1
-    writer.release()
+    try:
+        while written < target_frames:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            proc.stdin.write(frame.tobytes())
+            written += 1
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=10)
     return tmp
 
 
