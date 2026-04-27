@@ -22,6 +22,10 @@ def create_app() -> FastAPI:
     app.include_router(events.router)
     app.include_router(alerts.router)
     app.include_router(agent.router)
+    if settings.auth_bypass:
+        from app.routers import dev_storage
+
+        app.include_router(dev_storage.router)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

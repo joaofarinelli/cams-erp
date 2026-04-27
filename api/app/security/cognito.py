@@ -41,11 +41,29 @@ async def verify_cognito_token(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from e
 
 
+_DEV_SUB = "dev-bypass-sub"
+_DEV_EMAIL = "dev@cams-erp.local"
+
+
+async def _get_or_create_dev_user(db: AsyncSession) -> User:
+    result = await db.execute(select(User).where(User.cognito_sub == _DEV_SUB))
+    user = result.scalar_one_or_none()
+    if user is None:
+        user = User(cognito_sub=_DEV_SUB, email=_DEV_EMAIL)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    return user
+
+
 async def get_current_user(
-    authorization: str = Header(...),
+    authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> User:
-    if not authorization.lower().startswith("bearer "):
+    if get_settings().auth_bypass:
+        return await _get_or_create_dev_user(db)
+
+    if authorization is None or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1]
     claims = await verify_cognito_token(token)

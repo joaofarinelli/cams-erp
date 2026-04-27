@@ -47,3 +47,8 @@ python_version = "3.12"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "moto[cognitoidp,s3,secretsmanager,server,sqs]>=5.1.22",
+]

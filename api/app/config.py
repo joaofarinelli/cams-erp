@@ -14,9 +14,11 @@ class Settings(BaseSettings):
     cognito_user_pool_id: str = Field(default="")
     cognito_jwks_url: str = Field(default="")
     aws_region: str = Field(default="sa-east-1")
+    aws_endpoint_url: str = Field(default="")
     jwt_secret: str = Field(default="dev-secret-change-me")
     sentry_dsn: str = Field(default="")
     log_level: str = Field(default="INFO")
+    auth_bypass: bool = Field(default=False)
 
 
 @lru_cache
