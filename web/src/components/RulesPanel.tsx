@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Camera, Rule, createRule, deleteRule, thumbUrl, updateRule } from "../api";
+import { Camera, Rule, Schedule, createRule, deleteRule, thumbUrl, updateRule } from "../api";
 import { PolygonEditor, Zones } from "./PolygonEditor";
+import { ScheduleEditor } from "./ScheduleEditor";
 
 const PRESETS: Rule["preset_type"][] = ["cash_register", "kitchen_consumption", "retail_shelf"];
 
@@ -10,6 +11,8 @@ type FormDraft = {
   preset: Rule["preset_type"];
   customPrompt: string;
   zones: Zones;
+  sensitivity: number;
+  schedule: Schedule | null;
 };
 
 const empty = (cameras: Camera[]): FormDraft => ({
@@ -18,6 +21,8 @@ const empty = (cameras: Camera[]): FormDraft => ({
   preset: "cash_register",
   customPrompt: "",
   zones: {},
+  sensitivity: 50,
+  schedule: null,
 });
 
 export function RulesPanel({
@@ -47,6 +52,8 @@ export function RulesPanel({
       preset: rule.preset_type,
       customPrompt: rule.custom_prompt ?? "",
       zones: rule.zones ?? {},
+      sensitivity: rule.sensitivity ?? 50,
+      schedule: rule.schedule ?? null,
     });
     setEditingId(rule.id);
     setError(null);
@@ -78,12 +85,16 @@ export function RulesPanel({
           name: draft.name || undefined,
           custom_prompt: draft.customPrompt || undefined,
           zones: validZones,
+          sensitivity: draft.sensitivity,
+          schedule: draft.schedule,
         });
       } else if (editingId) {
         await updateRule(editingId, {
           name: draft.name || null,
           custom_prompt: draft.customPrompt || null,
           zones: validZones,
+          sensitivity: draft.sensitivity,
+          schedule: draft.schedule,
         });
       }
       close();
@@ -177,6 +188,27 @@ export function RulesPanel({
               />
             </div>
           )}
+          <label>
+            Sensibilidade ({draft.sensitivity})
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={draft.sensitivity}
+              onChange={(e) => setDraft({ ...draft, sensitivity: Number(e.target.value) })}
+            />
+            <small className="muted">
+              Quanto maior, mais frames passam pelo VLM (mais sensível, mais custo). Padrão 50.
+            </small>
+          </label>
+          <div>
+            <label className="zones-label">Horário ativo</label>
+            <ScheduleEditor
+              value={draft.schedule}
+              onChange={(s) => setDraft({ ...draft, schedule: s })}
+            />
+          </div>
           {error && <p className="error">{error}</p>}
           <div className="form-actions">
             <button type="submit" disabled={saving}>

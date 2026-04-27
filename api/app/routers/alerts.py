@@ -69,6 +69,50 @@ async def list_alerts(
     ]
 
 
+FP_STORM_WINDOW = 10
+FP_STORM_THRESHOLD = 7
+
+
+async def _maybe_auto_disable_rule_on_fp_storm(
+    db: AsyncSession, rule: Rule, *, owner_id
+) -> None:
+    """If the last FP_STORM_WINDOW alerts for this rule have FP_STORM_THRESHOLD
+    or more false positives, disable the rule and notify the owner. Quiet no-op
+    if the rule is already disabled."""
+    if not rule.enabled:
+        return
+    recent = (
+        await db.execute(
+            select(Alert.status)
+            .where(Alert.rule_id == rule.id)
+            .order_by(Alert.created_at.desc())
+            .limit(FP_STORM_WINDOW)
+        )
+    ).all()
+    if len(recent) < FP_STORM_THRESHOLD:
+        return
+    fp_count = sum(1 for (status_,) in recent if status_ == AlertStatus.false_positive)
+    if fp_count < FP_STORM_THRESHOLD:
+        return
+    rule.enabled = False
+    await db.commit()
+    label = rule.name or rule.preset_type.value
+    body = (
+        f"⚠️ Regra *{label}* desativada automaticamente.\n"
+        f"{fp_count} dos últimos {len(recent)} alertas foram marcados falso-positivo. "
+        f"Revise zonas/prompt e reative em Regras."
+    )
+    await fan_out_alert(
+        db,
+        owner_id=owner_id,
+        rule_name=label,
+        preset_type=rule.preset_type.value,
+        score=0.0,
+        message=body,
+        alert_id="fp-storm",
+    )
+
+
 @router.post("/{alert_id}/feedback", response_model=AlertOut)
 async def feedback(
     alert_id: UUID,
@@ -91,6 +135,10 @@ async def feedback(
     a.status = AlertStatus.false_positive if is_false_positive else AlertStatus.seen
     await db.commit()
     await db.refresh(a)
+
+    if is_false_positive:
+        await _maybe_auto_disable_rule_on_fp_storm(db, r, owner_id=user.id)
+
     return AlertOut(
         id=a.id,
         rule_id=a.rule_id,

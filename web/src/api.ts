@@ -19,8 +19,12 @@ export type Rule = {
   sensitivity: number;
   cooldown_seconds: number;
   custom_prompt: string | null;
+  schedule: Schedule | null;
   created_at: string;
 };
+
+export type ScheduleWindow = { days: number[]; start: string; end: string };
+export type Schedule = { timezone: string; windows: ScheduleWindow[] };
 
 export type Alert = {
   id: string;
@@ -87,6 +91,8 @@ export async function createRule(input: {
   name?: string;
   custom_prompt?: string;
   zones?: Rule["zones"];
+  sensitivity?: number;
+  schedule?: Schedule | null;
 }): Promise<Rule> {
   const r = await fetch(`${BASE}/rules`, {
     method: "POST",
@@ -99,7 +105,7 @@ export async function createRule(input: {
 
 export async function updateRule(
   ruleId: string,
-  patch: Partial<Pick<Rule, "name" | "enabled" | "zones" | "sensitivity" | "cooldown_seconds" | "custom_prompt">>
+  patch: Partial<Pick<Rule, "name" | "enabled" | "zones" | "sensitivity" | "cooldown_seconds" | "custom_prompt" | "schedule">>
 ): Promise<Rule> {
   const r = await fetch(`${BASE}/rules/${ruleId}`, {
     method: "PUT",

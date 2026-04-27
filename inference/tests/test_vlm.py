@@ -12,6 +12,27 @@ def _fake_response(parsed: AlertResult) -> MagicMock:
     return resp
 
 
+def test_yolo_confidence_from_sensitivity_mapping() -> None:
+    from inference.worker import _yolo_confidence_from_sensitivity
+
+    assert _yolo_confidence_from_sensitivity(None) == 0.35
+    assert _yolo_confidence_from_sensitivity(0) == 0.7
+    assert _yolo_confidence_from_sensitivity(50) == 0.4
+    assert _yolo_confidence_from_sensitivity(100) == 0.1
+    # clamping
+    assert _yolo_confidence_from_sensitivity(-50) == 0.7
+    assert _yolo_confidence_from_sensitivity(200) == 0.1
+
+
+def test_is_active_now_handles_overnight_and_none() -> None:
+    from inference.worker import _is_active_now
+
+    assert _is_active_now(None) is True
+    assert _is_active_now({}) is True
+    # overnight window — actual result depends on wall clock; just exercise the codepath
+    _is_active_now({"timezone": "America/Sao_Paulo", "windows": [{"days": [0,1,2,3,4,5,6], "start": "22:00", "end": "06:00"}]})
+
+
 def test_score_clip_unknown_preset_returns_no_alert() -> None:
     result = score_clip("/nonexistent.mp4", "wat", {})
     assert result.alert is False

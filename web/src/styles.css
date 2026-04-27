@@ -122,3 +122,14 @@ main { padding: 1rem 0; }
 .probe-result { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.5rem; }
 .probe-result img { width: 100%; border-radius: 4px; background: #000; }
 .probe-result p { margin: 0; font-size: 1rem; }
+
+.schedule-editor { display: flex; flex-direction: column; gap: 0.5rem; }
+.schedule-presets { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.schedule-presets button { padding: 0.3rem 0.6rem; border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; }
+.schedule-window { padding: 0.5rem; border: 1px solid #eee; border-radius: 4px; background: #fafafa; }
+.day-toggles { display: flex; gap: 2px; margin-bottom: 0.4rem; }
+.day-toggles button { padding: 0.25rem 0.5rem; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 0.8rem; min-width: 38px; }
+.day-toggles button.active { background: #06a; color: #fff; border-color: #06a; }
+.time-row { display: flex; gap: 0.5rem; align-items: center; }
+.time-row input { padding: 0.3rem; border: 1px solid #ccc; border-radius: 4px; }
+.time-row .muted { background: transparent; border: 0; cursor: pointer; color: #888; padding: 0.2rem 0.5rem; }

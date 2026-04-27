@@ -33,6 +33,53 @@ def _bool_env(name: str, default: bool = True) -> bool:
     return val.lower() in ("1", "true", "yes", "on")
 
 
+def _yolo_confidence_from_sensitivity(sensitivity: int | None) -> float:
+    """sensitivity 0..100 -> yolo conf 0.7..0.1 (higher sensitivity = looser)."""
+    if sensitivity is None:
+        return 0.35
+    s = max(0, min(100, int(sensitivity)))
+    return round(0.7 - (s / 100.0) * 0.6, 3)
+
+
+def _is_active_now(schedule: dict | None) -> bool:
+    """Mirror app/services/schedule.py for worker-side filtering."""
+    if not schedule:
+        return True
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    tz_name = schedule.get("timezone") or "America/Sao_Paulo"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:  # noqa: BLE001
+        tz = ZoneInfo("UTC")
+    local = datetime.now(tz)
+    weekday = local.weekday()
+    cur = local.time()
+
+    def _hhmm(s):
+        from datetime import time as _t
+        h, m = s.split(":")
+        return _t(int(h), int(m))
+
+    for w in schedule.get("windows") or []:
+        days = w.get("days") or list(range(7))
+        if weekday not in days:
+            continue
+        try:
+            start = _hhmm(w["start"])
+            end = _hhmm(w["end"])
+        except (KeyError, ValueError):
+            continue
+        if start <= end:
+            if start <= cur <= end:
+                return True
+        else:
+            if cur >= start or cur <= end:
+                return True
+    return False
+
+
 def log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
@@ -101,15 +148,22 @@ def process_event(event: dict, *, api_base: str, clips_dir: Path, yolo_filter: b
         return
 
     for rule in rules:
+        if not _is_active_now(rule.get("schedule")):
+            log(f"  rule={rule['id']} outside schedule, skipping")
+            continue
         preset = rule["preset_type"]
         zones = rule.get("zones", {}) or {}
         custom_prompt = rule.get("custom_prompt")
+        sensitivity = rule.get("sensitivity")
+        yolo_conf = _yolo_confidence_from_sensitivity(sensitivity)
         label = "custom" if custom_prompt else preset
-        log(f"  scoring rule={rule['id']} type={label}")
+        log(f"  scoring rule={rule['id']} type={label} yolo_conf={yolo_conf} sens={sensitivity}")
         try:
             result = score_clip(
                 str(clip_path), preset, zones,
-                custom_prompt=custom_prompt, yolo_filter=yolo_filter,
+                custom_prompt=custom_prompt,
+                yolo_filter=yolo_filter,
+                yolo_confidence=yolo_conf,
             )
         except Exception as e:  # noqa: BLE001
             log(f"  vlm error: {e!r}")

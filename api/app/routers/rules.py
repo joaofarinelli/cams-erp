@@ -42,6 +42,7 @@ async def create_rule(
         sensitivity=payload.sensitivity,
         cooldown_seconds=payload.cooldown_seconds,
         custom_prompt=payload.custom_prompt,
+        schedule=payload.schedule,
     )
     db.add(rule)
     await db.commit()
@@ -68,7 +69,7 @@ async def update_rule(
     db: AsyncSession = Depends(get_db),
 ) -> Rule:
     rule = await _owned_rule(rule_id, user, db)
-    for field in ("name", "enabled", "zones", "sensitivity", "cooldown_seconds", "custom_prompt"):
+    for field in ("name", "enabled", "zones", "sensitivity", "cooldown_seconds", "custom_prompt", "schedule"):
         v = getattr(payload, field)
         if v is not None:
             setattr(rule, field, v)
