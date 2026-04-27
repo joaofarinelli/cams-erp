@@ -3,8 +3,9 @@ import { Alert, Camera, Rule, listAlerts, listCameras, listRules, openAlertStrea
 import { AlertCard } from "./components/AlertCard";
 import { CamerasPanel } from "./components/CamerasPanel";
 import { RulesPanel } from "./components/RulesPanel";
+import { SubscribersPanel } from "./components/SubscribersPanel";
 
-type Tab = "alerts" | "cameras" | "rules";
+type Tab = "alerts" | "cameras" | "rules" | "subscribers";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -58,6 +59,9 @@ export function App() {
           <button className={tab === "rules" ? "active" : ""} onClick={() => setTab("rules")}>
             Regras
           </button>
+          <button className={tab === "subscribers" ? "active" : ""} onClick={() => setTab("subscribers")}>
+            Notificações
+          </button>
         </nav>
         <span className={`ws-dot ${wsConnected ? "ok" : "off"}`} title={wsConnected ? "WS conectado" : "aguardando"} />
       </header>
@@ -73,6 +77,7 @@ export function App() {
         )}
         {tab === "cameras" && <CamerasPanel cameras={cameras} rules={rules} />}
         {tab === "rules" && <RulesPanel cameras={cameras} rules={rules} onChange={refresh} />}
+        {tab === "subscribers" && <SubscribersPanel />}
       </main>
     </div>
   );

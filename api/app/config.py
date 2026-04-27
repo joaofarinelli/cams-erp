@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     sentry_dsn: str = Field(default="")
     log_level: str = Field(default="INFO")
     auth_bypass: bool = Field(default=False)
+    evolution_base_url: str = Field(default="http://localhost:8080")
+    evolution_api_key: str = Field(default="")
+    evolution_instance: str = Field(default="cams-erp")
+    expo_push_url: str = Field(default="https://exp.host/--/api/v2/push/send")
 
 
 @lru_cache

@@ -2,7 +2,7 @@ import sentry_sdk
 from fastapi import FastAPI
 
 from app.config import get_settings
-from app.routers import agent, alerts, cameras, clips, events, pairing, rules
+from app.routers import agent, alerts, cameras, clips, events, pairing, rules, subscribers
 
 
 def create_app() -> FastAPI:
@@ -22,6 +22,7 @@ def create_app() -> FastAPI:
     app.include_router(events.router)
     app.include_router(alerts.router)
     app.include_router(agent.router)
+    app.include_router(subscribers.router)
     if settings.auth_bypass:
         from app.routers import dev_storage
 

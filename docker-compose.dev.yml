@@ -1,0 +1,42 @@
+# Dev-only services. Run with `docker compose -f docker-compose.dev.yml up -d`.
+# - postgres: same instance the API talks to
+# - evolution: WhatsApp gateway (Evolution API v2 — unofficial Baileys-based)
+#
+# After bringing it up:
+#   1. Open http://localhost:8080/manager (apikey from env)
+#   2. Create instance "cams-erp"
+#   3. Scan the QR code with the WhatsApp number you want to send from
+#   4. Set CAMS_EVOLUTION_API_KEY in .env to match EVOLUTION_API_KEY below
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: camserp-pg
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  evolution:
+    image: atendai/evolution-api:v2.2.0
+    container_name: camserp-evolution
+    ports:
+      - "8080:8080"
+    environment:
+      AUTHENTICATION_API_KEY: dev-evolution-key-change-me
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+      DATABASE_ENABLED: "false"
+      CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
+      LANGUAGE: pt-BR
+      CONFIG_SESSION_PHONE_CLIENT: cams-erp
+      QRCODE_LIMIT: "30"
+      LOG_LEVEL: ERROR,WARN,INFO
+    volumes:
+      - evolution-instances:/evolution/instances
+
+volumes:
+  pgdata:
+  evolution-instances:

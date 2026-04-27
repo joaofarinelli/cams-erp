@@ -23,6 +23,11 @@ class AlertStatus(StrEnum):
     false_positive = "false_positive"
 
 
+class SubscriberKind(StrEnum):
+    whatsapp = "whatsapp"
+    expo_push = "expo_push"
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[UUID] = mapped_column(
@@ -115,6 +120,26 @@ class Event(Base):
     duration_ms: Mapped[int] = mapped_column()
     processed: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Subscriber(Base):
+    __tablename__ = "subscribers"
+    id: Mapped[UUID] = mapped_column(
+        PGUUID,
+        primary_key=True,
+        default=uuid4,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    owner_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[SubscriberKind] = mapped_column(Enum(SubscriberKind, name="subscriber_kind"))
+    target: Mapped[str] = mapped_column(String(256))
+    enabled: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (
+        sa.UniqueConstraint("owner_id", "kind", "target", name="uq_subscriber_owner_target"),
+    )
 
 
 class Alert(Base):

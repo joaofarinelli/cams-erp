@@ -11,6 +11,7 @@ from app.db.models import Alert, AlertStatus, Camera, Device, Event, PresetType,
 from app.db.session import get_db
 from app.schemas.alerts import AlertOut
 from app.security.cognito import get_current_user
+from app.services.notifications import fan_out_alert
 from app.services.pubsub import broker
 
 
@@ -153,6 +154,15 @@ async def create_internal_alert(
             "message": payload.message,
             "created_at": alert.created_at.isoformat(),
         },
+    )
+    await fan_out_alert(
+        db,
+        owner_id=device.owner_id,
+        rule_name=rule.name,
+        preset_type=rule.preset_type.value,
+        score=payload.score,
+        message=payload.message,
+        alert_id=str(alert.id),
     )
     return {"id": str(alert.id)}
 

@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View } from "react-native";
-import { Link } from "expo-router";
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { Link, Stack } from "expo-router";
 import { Alert, listAlerts, openAlertStream } from "../src/api";
 
 export default function AlertsScreen() {
@@ -33,6 +41,17 @@ export default function AlertsScreen() {
 
   return (
     <View style={styles.container}>
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <Link href="/settings" asChild>
+              <Pressable hitSlop={12}>
+                <Text style={{ color: "#06a", fontSize: 22 }}>⚙</Text>
+              </Pressable>
+            </Link>
+          ),
+        }}
+      />
       <View style={styles.statusBar}>
         <View style={[styles.dot, { backgroundColor: wsOk ? "#2a2" : "#aaa" }]} />
         <Text style={styles.statusText}>{wsOk ? "Tempo real conectado" : "Aguardando push"}</Text>

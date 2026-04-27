@@ -35,6 +35,35 @@ export async function listAlerts(): Promise<Alert[]> {
   return r.json();
 }
 
+export type Subscriber = {
+  id: string;
+  kind: "whatsapp" | "expo_push";
+  target: string;
+  enabled: boolean;
+  created_at: string;
+};
+
+export async function listSubscribers(): Promise<Subscriber[]> {
+  const r = await fetch(`${API_BASE}/me/subscribers`);
+  if (!r.ok) throw new Error(`subscribers GET ${r.status}`);
+  return r.json();
+}
+
+export async function createSubscriber(kind: Subscriber["kind"], target: string): Promise<Subscriber> {
+  const r = await fetch(`${API_BASE}/me/subscribers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, target }),
+  });
+  if (!r.ok) throw new Error(`subscribers POST ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+export async function deleteSubscriber(id: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/me/subscribers/${id}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`subscribers DELETE ${r.status}`);
+}
+
 export async function postFeedback(alertId: string, isFalsePositive: boolean): Promise<Alert> {
   const r = await fetch(
     `${API_BASE}/alerts/${alertId}/feedback?is_false_positive=${isFalsePositive}`,
