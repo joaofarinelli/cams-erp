@@ -51,3 +51,27 @@ main { padding: 1rem 0; }
 .rule-list { list-style: none; padding: 0; }
 .rule-list li { padding: 0.4rem 0; border-bottom: 1px solid #eee; }
 .muted { color: #888; }
+
+.cam-thumb { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; background: #000; margin-bottom: 0.5rem; display: block; }
+.cam-thumb-empty { display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 0.8rem; background: #222; }
+
+.zones-label { display: block; margin: 0.5rem 0 0.25rem; font-size: 0.9rem; }
+.polygon-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.25rem; }
+@media (max-width: 700px) { .polygon-editor { grid-template-columns: 1fr; } }
+.polygon-canvas { position: relative; aspect-ratio: 4 / 3; background: #000; border-radius: 4px; overflow: hidden; user-select: none; }
+.polygon-canvas img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.polygon-canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
+.polygon-placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: #aaa; padding: 1rem; text-align: center; font-size: 0.85rem; }
+
+.polygon-controls { display: flex; flex-direction: column; gap: 0.5rem; }
+.zone-list { display: flex; flex-direction: column; gap: 0.25rem; max-height: 160px; overflow-y: auto; }
+.zone-row { display: flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.4rem; border-radius: 4px; }
+.zone-row.active { background: #f0f4f8; }
+.zone-color { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.zone-name { flex: 1; text-align: left; background: transparent; border: 0; cursor: pointer; padding: 0.2rem; font: inherit; }
+.zone-row .muted { background: transparent; border: 0; color: #888; cursor: pointer; }
+.polygon-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.polygon-actions button { background: #fff; border: 1px solid #ccc; padding: 0.3rem 0.6rem; border-radius: 4px; cursor: pointer; }
+.polygon-actions button.muted { color: #888; }
+.polygon-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.polygon-help { font-size: 0.8rem; color: #888; margin: 0.25rem 0 0; }

@@ -96,6 +96,12 @@ export function clipUrl(s3_key: string): string {
   return `${BASE}/dev/s3/${s3_key}`;
 }
 
+export function thumbUrl(cameraId: string, bust = 0): string {
+  // bust is appended as a query param so the browser refetches when we want
+  // a fresh thumbnail (e.g. after a new event has come in).
+  return `${BASE}/cameras/${cameraId}/thumb.jpg${bust ? `?t=${bust}` : ""}`;
+}
+
 export function openAlertStream(onMessage: (alert: WSAlert) => void): () => void {
   // Vite proxy forwards /api/alerts/stream over WS. Same-origin URL so no
   // CORS / cookies pain.

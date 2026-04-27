@@ -1,4 +1,5 @@
-import { Camera, Rule } from "../api";
+import { useState } from "react";
+import { Camera, Rule, thumbUrl } from "../api";
 
 export function CamerasPanel({ cameras, rules }: { cameras: Camera[]; rules: Rule[] }) {
   return (
@@ -6,25 +7,35 @@ export function CamerasPanel({ cameras, rules }: { cameras: Camera[]; rules: Rul
       {cameras.length === 0 && <p className="empty">Nenhuma câmera cadastrada.</p>}
       {cameras.map((c) => {
         const camRules = rules.filter((r) => r.camera_id === c.id);
-        return (
-          <div className="camera-card" key={c.id}>
-            <header>
-              <strong>{c.name}</strong>
-              <span className={`status-dot ${c.online ? "online" : "offline"}`} />
-            </header>
-            <small>id: {c.id.slice(0, 8)}…</small>
-            <ul>
-              {camRules.length === 0 && <li className="empty">Sem regras</li>}
-              {camRules.map((r) => (
-                <li key={r.id}>
-                  {r.enabled ? "✓" : "—"} {r.name || r.preset_type}
-                  {r.custom_prompt && <em title={r.custom_prompt}> [custom]</em>}
-                </li>
-              ))}
-            </ul>
-          </div>
-        );
+        return <CameraCard key={c.id} cam={c} rules={camRules} />;
       })}
     </section>
+  );
+}
+
+function CameraCard({ cam, rules }: { cam: Camera; rules: Rule[] }) {
+  const [thumbOk, setThumbOk] = useState(true);
+  return (
+    <div className="camera-card">
+      {thumbOk ? (
+        <img src={thumbUrl(cam.id)} alt={cam.name} onError={() => setThumbOk(false)} className="cam-thumb" />
+      ) : (
+        <div className="cam-thumb cam-thumb-empty">sem capturas ainda</div>
+      )}
+      <header>
+        <strong>{cam.name}</strong>
+        <span className={`status-dot ${cam.online ? "online" : "offline"}`} />
+      </header>
+      <small>id: {cam.id.slice(0, 8)}…</small>
+      <ul>
+        {rules.length === 0 && <li className="empty">Sem regras</li>}
+        {rules.map((r) => (
+          <li key={r.id}>
+            {r.enabled ? "✓" : "—"} {r.name || r.preset_type}
+            {r.custom_prompt && <em title={r.custom_prompt}> [custom]</em>}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

@@ -1,14 +1,18 @@
+import asyncio
+from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Camera, Device, User
+from app.db.models import Camera, Device, Event, User
 from app.db.session import get_db
 from app.schemas.cameras import CameraCreate, CameraOut, CameraUpdate
 from app.security.cognito import get_current_user
 from app.services.kms import decrypt, encrypt
+
+CLIPS_DIR = Path("/tmp/cams-erp-clips")
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -73,6 +77,58 @@ async def update_camera(
     await db.commit()
     await db.refresh(cam)
     return cam
+
+
+@router.get("/{camera_id}/thumb.jpg")
+async def camera_thumbnail(
+    camera_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Return a JPEG of the most recent uploaded clip's middle frame.
+
+    Used by the web polygon editor and the camera list. 404 if no clip has
+    been uploaded yet for this camera. Extracted with ffmpeg on the fly —
+    cheap (<100ms) for short clips."""
+    cam = await _owned_camera(camera_id, user, db)
+    stmt = (
+        select(Event)
+        .where(Event.camera_id == cam.id)
+        .order_by(Event.created_at.desc())
+        .limit(1)
+    )
+    event = (await db.execute(stmt)).scalar_one_or_none()
+    if event is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No clip available yet")
+    clip_path = CLIPS_DIR / event.s3_key
+    if not clip_path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Clip missing on disk")
+
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg",
+        "-loglevel", "error",
+        "-ss", "1",
+        "-i", str(clip_path),
+        "-frames:v", "1",
+        "-vf", "scale=640:-2",
+        "-f", "image2",
+        "-c:v", "mjpeg",
+        "-y",
+        "pipe:1",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0 or not stdout:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"ffmpeg failed: {stderr.decode(errors='replace')[:200]}",
+        )
+    return Response(
+        content=stdout,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=10"},
+    )
 
 
 @router.delete("/{camera_id}", status_code=204)

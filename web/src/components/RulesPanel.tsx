@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Camera, Rule, createRule } from "../api";
+import { Camera, Rule, createRule, thumbUrl } from "../api";
+import { PolygonEditor, Zones } from "./PolygonEditor";
 
 const PRESETS: Rule["preset_type"][] = ["cash_register", "kitchen_consumption", "retail_shelf"];
 
@@ -16,6 +17,7 @@ export function RulesPanel({
   const [name, setName] = useState("");
   const [preset, setPreset] = useState<Rule["preset_type"]>("cash_register");
   const [customPrompt, setCustomPrompt] = useState("");
+  const [zones, setZones] = useState<Zones>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,6 +27,10 @@ export function RulesPanel({
       setError("Selecione uma câmera");
       return;
     }
+    const validZones: Zones = {};
+    for (const [k, pts] of Object.entries(zones)) {
+      if (pts.length >= 3) validZones[k] = pts;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -33,9 +39,11 @@ export function RulesPanel({
         preset_type: preset,
         name: name || undefined,
         custom_prompt: customPrompt || undefined,
+        zones: validZones,
       });
       setName("");
       setCustomPrompt("");
+      setZones({});
       onChange();
     } catch (e) {
       setError(String(e));
@@ -50,7 +58,13 @@ export function RulesPanel({
         <h2>Nova regra</h2>
         <label>
           Câmera
-          <select value={cameraId} onChange={(e) => setCameraId(e.target.value)}>
+          <select
+            value={cameraId}
+            onChange={(e) => {
+              setCameraId(e.target.value);
+              setZones({});
+            }}
+          >
             <option value="">— selecione —</option>
             {cameras.map((c) => (
               <option key={c.id} value={c.id}>
@@ -61,11 +75,7 @@ export function RulesPanel({
         </label>
         <label>
           Nome (opcional)
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Ex: Toque no balcão"
-          />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Toque no balcão" />
         </label>
         <label>
           Categoria
@@ -86,6 +96,12 @@ export function RulesPanel({
             placeholder="Ex: Toda vez que alguem bater no balcao com a mao, alertar imediatamente."
           />
         </label>
+        {cameraId && (
+          <div>
+            <label className="zones-label">Zonas (opcional)</label>
+            <PolygonEditor imgUrl={thumbUrl(cameraId)} value={zones} onChange={setZones} />
+          </div>
+        )}
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={saving}>
           {saving ? "Salvando…" : "Criar regra"}
@@ -96,12 +112,14 @@ export function RulesPanel({
       <ul className="rule-list">
         {rules.map((r) => {
           const cam = cameras.find((c) => c.id === r.camera_id);
+          const zoneNames = Object.keys(r.zones || {});
           return (
             <li key={r.id}>
               <strong>{r.name || r.preset_type}</strong>
               {" — "}
               <span>{cam?.name || r.camera_id.slice(0, 8)}</span>
               {r.custom_prompt && <em title={r.custom_prompt}> [custom]</em>}
+              {zoneNames.length > 0 && <span className="muted"> [{zoneNames.join(", ")}]</span>}
               {!r.enabled && <span className="muted"> (desativada)</span>}
             </li>
           );
