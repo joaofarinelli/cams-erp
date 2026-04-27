@@ -26,6 +26,13 @@ import httpx
 from inference.vlm import score_clip
 
 
+def _bool_env(name: str, default: bool = True) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.lower() in ("1", "true", "yes", "on")
+
+
 def log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
@@ -70,7 +77,7 @@ def tail_events(log_path: Path, state_path: Path):
         time.sleep(2)
 
 
-def process_event(event: dict, *, api_base: str, clips_dir: Path) -> None:
+def process_event(event: dict, *, api_base: str, clips_dir: Path, yolo_filter: bool = True) -> None:
     camera_id = event.get("camera_id")
     s3_key = event.get("s3_key")
     event_id = event.get("event_id")
@@ -100,7 +107,10 @@ def process_event(event: dict, *, api_base: str, clips_dir: Path) -> None:
         label = "custom" if custom_prompt else preset
         log(f"  scoring rule={rule['id']} type={label}")
         try:
-            result = score_clip(str(clip_path), preset, zones, custom_prompt=custom_prompt)
+            result = score_clip(
+                str(clip_path), preset, zones,
+                custom_prompt=custom_prompt, yolo_filter=yolo_filter,
+            )
         except Exception as e:  # noqa: BLE001
             log(f"  vlm error: {e!r}")
             continue
@@ -128,12 +138,18 @@ def main() -> None:
     p.add_argument("--events-log", default="/tmp/cams-erp-events.log")
     p.add_argument("--state-file", default="/tmp/cams-erp-inference-state")
     p.add_argument("--clips-dir", default="/tmp/cams-erp-clips")
+    p.add_argument(
+        "--no-yolo",
+        action="store_true",
+        help="Disable the YOLOv8n person filter; send every clip to the VLM.",
+    )
     args = p.parse_args()
+    yolo_filter = (not args.no_yolo) and _bool_env("CAMS_YOLO_FILTER", default=True)
 
-    log(f"inference worker starting; api={args.api} clips={args.clips_dir}")
+    log(f"inference worker starting; api={args.api} clips={args.clips_dir} yolo_filter={yolo_filter}")
     for event in tail_events(Path(args.events_log), Path(args.state_file)):
         log(f"event {event.get('event_id')} cam={event.get('camera_id')}")
-        process_event(event, api_base=args.api, clips_dir=Path(args.clips_dir))
+        process_event(event, api_base=args.api, clips_dir=Path(args.clips_dir), yolo_filter=yolo_filter)
 
 
 if __name__ == "__main__":

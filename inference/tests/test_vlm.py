@@ -18,6 +18,24 @@ def test_score_clip_unknown_preset_returns_no_alert() -> None:
     assert "unknown preset" in result.message
 
 
+def test_score_clip_skips_vlm_when_yolo_finds_no_person(monkeypatch) -> None:
+    fake_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    monkeypatch.setattr(vlm, "sample_frames", lambda *_args, **_kw: [fake_frame] * 4)
+    monkeypatch.setattr("inference.yolo.has_person", lambda frames, confidence=0.35: (False, 0.12))
+    fake_client = MagicMock()
+
+    result = vlm.score_clip(
+        "/x.mp4",
+        "cash_register",
+        {"gaveta": [[0, 0], [1, 0], [1, 1]], "pc_operador": [[0, 0], [1, 0], [1, 1]]},
+        client=fake_client,
+        yolo_filter=True,
+    )
+    assert result.alert is False
+    assert "no person" in result.message
+    fake_client.messages.parse.assert_not_called()
+
+
 def test_score_clip_no_frames_returns_no_alert(monkeypatch) -> None:
     monkeypatch.setattr(vlm, "sample_frames", lambda *_args, **_kw: [])
     result = score_clip("/nonexistent.mp4", "cash_register", {"gaveta": [[0, 0], [1, 0], [1, 1]]})
@@ -40,6 +58,7 @@ def test_score_clip_with_custom_prompt_uses_custom_system(monkeypatch) -> None:
         {},
         custom_prompt="Toda vez que alguem bate no balcao com a mao",
         client=fake_client,
+        yolo_filter=False,
     )
     assert result.alert is True
     assert result.evidence_frame_idx == 1
@@ -65,6 +84,7 @@ def test_score_clip_calls_anthropic_and_returns_parsed(monkeypatch) -> None:
         "cash_register",
         {"gaveta": [[0, 0], [1, 0], [1, 1]], "pc_operador": [[0, 0], [1, 0], [1, 1]]},
         client=fake_client,
+        yolo_filter=False,
     )
 
     assert result.alert is True

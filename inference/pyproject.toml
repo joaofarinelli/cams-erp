@@ -9,6 +9,7 @@ dependencies = [
   "httpx>=0.27",
   "numpy>=1.26",
   "pydantic>=2.7",
+  "ultralytics>=8.4.42",
 ]
 
 [project.optional-dependencies]

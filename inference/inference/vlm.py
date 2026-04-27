@@ -65,6 +65,8 @@ def score_clip(
     client: Anthropic | None = None,
     model: str = "claude-haiku-4-5",
     n_frames: int = 4,
+    yolo_filter: bool = True,
+    yolo_confidence: float = 0.35,
 ) -> AlertResult:
     if not custom_prompt and preset_type not in PRESET_PROMPTS:
         return AlertResult(alert=False, score=0.0, message=f"unknown preset {preset_type}")
@@ -72,6 +74,17 @@ def score_clip(
     frames = sample_frames(clip_path, n=n_frames)
     if not frames:
         return AlertResult(alert=False, score=0.0, message="no frames extracted from clip")
+
+    if yolo_filter:
+        from inference.yolo import has_person
+
+        found, max_conf = has_person(frames, confidence=yolo_confidence)
+        if not found:
+            return AlertResult(
+                alert=False,
+                score=0.0,
+                message=f"yolo: no person detected (max_conf={max_conf:.2f}); skipped VLM",
+            )
 
     if client is None:
         client = Anthropic()
