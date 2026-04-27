@@ -95,10 +95,12 @@ def process_event(event: dict, *, api_base: str, clips_dir: Path) -> None:
 
     for rule in rules:
         preset = rule["preset_type"]
-        zones = rule.get("zones", {})
-        log(f"  scoring rule={rule['id']} preset={preset}")
+        zones = rule.get("zones", {}) or {}
+        custom_prompt = rule.get("custom_prompt")
+        label = "custom" if custom_prompt else preset
+        log(f"  scoring rule={rule['id']} type={label}")
         try:
-            result = score_clip(str(clip_path), preset, zones)
+            result = score_clip(str(clip_path), preset, zones, custom_prompt=custom_prompt)
         except Exception as e:  # noqa: BLE001
             log(f"  vlm error: {e!r}")
             continue

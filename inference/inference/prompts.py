@@ -47,8 +47,20 @@ PRESET_PROMPTS: dict[str, dict] = {
 }
 
 
+CUSTOM_SYSTEM = (
+    "Voce analisa videoclipes curtos (3-10s) de cameras de seguranca em "
+    "comercios PME brasileiros. O usuario configurou uma regra customizada "
+    "em linguagem natural; sua funcao e detectar se o comportamento descrito "
+    "ocorreu no video. Voce retorna JSON estrito {alert: bool, score: 0..1, "
+    "message: pt-BR curto, evidence_frame_idx: int|null}. Nao gere falso "
+    "positivo: so flag se a evidencia for clara e diretamente alinhada a "
+    "regra do usuario. Mensagem deve mencionar o frame que motivou a decisao."
+)
+
+
 def build_user_text(preset_type: str, zones: dict, n_frames: int) -> str:
-    """Compose the per-event user text. Frames are appended as image blocks."""
+    """Compose the per-event user text for a preset rule. Frames are appended
+    as image blocks."""
     cfg = PRESET_PROMPTS[preset_type]
     zone_lines = []
     for key in cfg["zone_keys"]:
@@ -61,4 +73,19 @@ def build_user_text(preset_type: str, zones: dict, n_frames: int) -> str:
         f"{zones_block}\n\n"
         f"Analise os {n_frames} frames abaixo em ordem cronologica. "
         f"Decida se o comportamento suspeito do preset ocorreu."
+    )
+
+
+def build_custom_user_text(custom_prompt: str, zones: dict, n_frames: int) -> str:
+    """Compose the per-event user text for a custom-prompt rule."""
+    if zones:
+        zone_lines = "\n".join(f"- {k}: {v}" for k, v in zones.items())
+        zones_block = f"Zonas configuradas (poligonos normalizados 0..1):\n{zone_lines}\n\n"
+    else:
+        zones_block = ""
+    return (
+        f"Regra do usuario:\n{custom_prompt}\n\n"
+        f"{zones_block}"
+        f"Analise os {n_frames} frames abaixo em ordem cronologica. "
+        f"Decida se o comportamento descrito na regra ocorreu."
     )

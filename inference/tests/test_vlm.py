@@ -25,6 +25,32 @@ def test_score_clip_no_frames_returns_no_alert(monkeypatch) -> None:
     assert "no frames" in result.message
 
 
+def test_score_clip_with_custom_prompt_uses_custom_system(monkeypatch) -> None:
+    fake_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    monkeypatch.setattr(vlm, "sample_frames", lambda *_args, **_kw: [fake_frame] * 4)
+
+    fake_client = MagicMock()
+    fake_client.messages.parse.return_value = _fake_response(
+        AlertResult(alert=True, score=0.77, message="Bateu na bancada com a mao no frame 1", evidence_frame_idx=1)
+    )
+
+    result = score_clip(
+        "/x.mp4",
+        "cash_register",
+        {},
+        custom_prompt="Toda vez que alguem bate no balcao com a mao",
+        client=fake_client,
+    )
+    assert result.alert is True
+    assert result.evidence_frame_idx == 1
+
+    call_args = fake_client.messages.parse.call_args
+    system_text = call_args.kwargs["system"][0]["text"]
+    assert "regra customizada" in system_text.lower()
+    user_text = call_args.kwargs["messages"][0]["content"][0]["text"]
+    assert "Toda vez que alguem bate no balcao com a mao" in user_text
+
+
 def test_score_clip_calls_anthropic_and_returns_parsed(monkeypatch) -> None:
     fake_frame = np.zeros((480, 640, 3), dtype=np.uint8)
     monkeypatch.setattr(vlm, "sample_frames", lambda *_args, **_kw: [fake_frame] * 4)

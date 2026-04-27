@@ -60,6 +60,7 @@ async def get_config(
                         "zones": r.zones,
                         "sensitivity": r.sensitivity,
                         "cooldown_seconds": r.cooldown_seconds,
+                        "custom_prompt": r.custom_prompt,
                     }
                     for r in rules
                 ],

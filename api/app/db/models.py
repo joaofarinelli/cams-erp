@@ -93,6 +93,7 @@ class Rule(Base):
     zones: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=sa.text("'{}'::jsonb"))
     sensitivity: Mapped[int] = mapped_column(default=50, server_default=sa.text("50"))
     cooldown_seconds: Mapped[int] = mapped_column(default=300, server_default=sa.text("300"))
+    custom_prompt: Mapped[str | None] = mapped_column(String(4000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

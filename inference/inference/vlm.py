@@ -10,7 +10,7 @@ import numpy as np
 from anthropic import Anthropic
 from pydantic import BaseModel, Field
 
-from inference.prompts import PRESET_PROMPTS, build_user_text
+from inference.prompts import CUSTOM_SYSTEM, PRESET_PROMPTS, build_custom_user_text, build_user_text
 
 
 class AlertResult(BaseModel):
@@ -61,11 +61,12 @@ def score_clip(
     preset_type: str,
     zones: dict,
     *,
+    custom_prompt: str | None = None,
     client: Anthropic | None = None,
     model: str = "claude-haiku-4-5",
     n_frames: int = 4,
 ) -> AlertResult:
-    if preset_type not in PRESET_PROMPTS:
+    if not custom_prompt and preset_type not in PRESET_PROMPTS:
         return AlertResult(alert=False, score=0.0, message=f"unknown preset {preset_type}")
 
     frames = sample_frames(clip_path, n=n_frames)
@@ -75,16 +76,22 @@ def score_clip(
     if client is None:
         client = Anthropic()
 
-    cfg = PRESET_PROMPTS[preset_type]
+    if custom_prompt:
+        system_text = CUSTOM_SYSTEM
+        user_text = build_custom_user_text(custom_prompt, zones, len(frames))
+    else:
+        system_text = PRESET_PROMPTS[preset_type]["system"]
+        user_text = build_user_text(preset_type, zones, len(frames))
+
     system = [
         {
             "type": "text",
-            "text": cfg["system"],
+            "text": system_text,
             "cache_control": {"type": "ephemeral"},
         }
     ]
 
-    content: list[Any] = [{"type": "text", "text": build_user_text(preset_type, zones, len(frames))}]
+    content: list[Any] = [{"type": "text", "text": user_text}]
     for i, frame in enumerate(frames):
         content.append({"type": "text", "text": f"Frame {i}:"})
         content.append(

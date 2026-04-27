@@ -14,9 +14,10 @@ class RuleCreate(BaseModel):
     camera_id: UUID
     preset_type: PresetType
     enabled: bool = True
-    zones: dict[str, Polygon]
+    zones: dict[str, Polygon] = Field(default_factory=dict)
     sensitivity: int = Field(ge=0, le=100, default=50)
     cooldown_seconds: int = Field(ge=10, le=3600, default=300)
+    custom_prompt: str | None = Field(default=None, max_length=4000)
 
 
 class RuleUpdate(BaseModel):
@@ -24,6 +25,7 @@ class RuleUpdate(BaseModel):
     zones: dict[str, Polygon] | None = None
     sensitivity: int | None = Field(default=None, ge=0, le=100)
     cooldown_seconds: int | None = Field(default=None, ge=10, le=3600)
+    custom_prompt: str | None = Field(default=None, max_length=4000)
 
 
 class RuleOut(BaseModel):
@@ -34,6 +36,7 @@ class RuleOut(BaseModel):
     zones: dict
     sensitivity: int
     cooldown_seconds: int
+    custom_prompt: str | None = None
     created_at: datetime
 
     class Config:
