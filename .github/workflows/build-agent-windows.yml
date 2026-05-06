@@ -2,7 +2,7 @@ name: Build PDV agent (Windows .exe)
 
 on:
   push:
-    branches: [main]
+    branches: [main, agent-windows-build]
     paths:
       - "agent/dev/**"
       - ".github/workflows/build-agent-windows.yml"
