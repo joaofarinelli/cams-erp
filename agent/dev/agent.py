@@ -29,7 +29,13 @@ import numpy as np
 import websockets
 
 from discovery import url_templates_for, ws_discover
-from rtsp_probe import first_frame_jpeg, jpeg_to_data_url, probe_stream
+from rtsp_probe import (
+    first_frame_jpeg,
+    is_local,
+    jpeg_to_data_url,
+    list_dshow_devices,
+    probe_stream,
+)
 
 
 def log(msg: str) -> None:
@@ -156,9 +162,13 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
     job_id = msg.get("job_id")
     type_ = msg.get("type")
     params = msg.get("params") or {}
+
+    def _source(p: dict) -> str:
+        return p.get("source") or p.get("rtsp_url") or ""
+
     try:
         if type_ == "snapshot":
-            rtsp = params["rtsp_url"]
+            rtsp = _source(params)
             jpeg = await first_frame_jpeg(rtsp, timeout=8.0)
             if jpeg is None:
                 await ws.send(
@@ -182,11 +192,23 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
                     continue
                 d2 = {**d, "url_templates": url_templates_for(d.get("vendor"))}
                 devices.append(d2)
+            local = await list_dshow_devices()
             await ws.send(
-                json.dumps({"job_id": job_id, "ok": True, "result": {"devices": devices}})
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "ok": True,
+                        "result": {"devices": devices, "local_devices": local},
+                    }
+                )
+            )
+        elif type_ == "list_local":
+            local = await list_dshow_devices()
+            await ws.send(
+                json.dumps({"job_id": job_id, "ok": True, "result": {"local_devices": local}})
             )
         elif type_ == "probe":
-            rtsp = params["rtsp_url"]
+            rtsp = _source(params)
             info = await probe_stream(rtsp, timeout=8.0)
             preview = None
             if info.get("ok") and params.get("include_frame", True):
@@ -213,21 +235,27 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
 _LIVE_TASKS: dict[str, asyncio.Task] = {}
 
 
-async def _live_stream(ws, camera_id: str, rtsp_url: str) -> None:
+async def _live_stream(ws, camera_id: str, source: str) -> None:
     import base64
 
-    log(f"live_start cam={camera_id}")
-    args = [
-        "ffmpeg",
-        "-loglevel", "error",
-        "-rtsp_transport", "tcp",
-        "-i", rtsp_url,
-        "-vf", "fps=24,scale=640:-2",
-        "-c:v", "mjpeg",
-        "-q:v", "7",
-        "-f", "mjpeg",
-        "pipe:1",
-    ]
+    log(f"live_start cam={camera_id} source={source[:50]}")
+    if is_local(source):
+        rest = source.split(":", 1)[1]
+        spec = rest if rest.startswith("video=") else f"video={rest}"
+        input_args = ["-f", "dshow", "-i", spec]
+    else:
+        input_args = ["-rtsp_transport", "tcp", "-i", source]
+    args = (
+        ["ffmpeg", "-loglevel", "error"]
+        + input_args
+        + [
+            "-vf", "fps=24,scale=640:-2",
+            "-c:v", "mjpeg",
+            "-q:v", "7",
+            "-f", "mjpeg",
+            "pipe:1",
+        ]
+    )
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
@@ -280,10 +308,10 @@ async def _live_stream(ws, camera_id: str, rtsp_url: str) -> None:
         log(f"live_stop cam={camera_id}")
 
 
-async def _start_live(ws, camera_id: str, rtsp_url: str) -> None:
+async def _start_live(ws, camera_id: str, source: str) -> None:
     if camera_id in _LIVE_TASKS:
         return
-    task = asyncio.create_task(_live_stream(ws, camera_id, rtsp_url))
+    task = asyncio.create_task(_live_stream(ws, camera_id, source))
     _LIVE_TASKS[camera_id] = task
 
     def _cleanup(_t: asyncio.Task) -> None:
@@ -312,8 +340,9 @@ async def _control_loop(api_base: str, device_token: str) -> None:
                         continue
                     t = msg.get("type")
                     if t == "live_start":
+                        src = msg.get("source") or msg.get("rtsp_url") or ""
                         asyncio.create_task(
-                            _start_live(ws, msg["camera_id"], msg["rtsp_url"])
+                            _start_live(ws, msg["camera_id"], src)
                         )
                     elif t == "live_stop":
                         _stop_live(msg["camera_id"])
@@ -355,10 +384,32 @@ def run(cfg: AgentConfig) -> None:
             stop.set()
         return
 
-    log(f"connecting RTSP: {cfg.rtsp_url}")
-    cap = cv2.VideoCapture(cfg.rtsp_url, cv2.CAP_FFMPEG)
+    log(f"connecting source: {cfg.rtsp_url}")
+    if is_local(cfg.rtsp_url):
+        rest = cfg.rtsp_url.split(":", 1)[1]
+        if rest.startswith("video="):
+            log("dshow named device: motion-trigger loop not supported via cv2; running in control-only mode")
+            stop = threading.Event()
+            hb = threading.Thread(target=heartbeat_loop, args=(cfg, stop), daemon=True)
+            hb.start()
+            ctl = threading.Thread(target=control_thread, args=(cfg, stop), daemon=True)
+            ctl.start()
+            try:
+                while True:
+                    time.sleep(60)
+            except KeyboardInterrupt:
+                stop.set()
+            return
+        try:
+            idx = int(rest)
+        except ValueError:
+            log(f"invalid dshow source: {cfg.rtsp_url}")
+            sys.exit(1)
+        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+    else:
+        cap = cv2.VideoCapture(cfg.rtsp_url, cv2.CAP_FFMPEG)
     if not cap.isOpened():
-        log("RTSP open failed")
+        log("source open failed")
         sys.exit(1)
     fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -379,7 +430,10 @@ def run(cfg: AgentConfig) -> None:
             if not ok:
                 log("frame read failed; reconnecting in 2s")
                 time.sleep(2)
-                cap = cv2.VideoCapture(cfg.rtsp_url, cv2.CAP_FFMPEG)
+                if is_local(cfg.rtsp_url):
+                    cap = cv2.VideoCapture(int(cfg.rtsp_url.split(":", 1)[1]), cv2.CAP_DSHOW)
+                else:
+                    cap = cv2.VideoCapture(cfg.rtsp_url, cv2.CAP_FFMPEG)
                 continue
             gray = cv2.cvtColor(cv2.resize(frame, (320, 240)), cv2.COLOR_BGR2GRAY)
             if prev_gray is None:

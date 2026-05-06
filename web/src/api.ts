@@ -12,13 +12,12 @@ export type Camera = {
 export type Rule = {
   id: string;
   camera_id: string;
-  preset_type: "cash_register" | "kitchen_consumption" | "retail_shelf";
   name: string | null;
   enabled: boolean;
   zones: Record<string, [number, number][]>;
   sensitivity: number;
   cooldown_seconds: number;
-  custom_prompt: string | null;
+  custom_prompt: string;
   schedule: Schedule | null;
   created_at: string;
 };
@@ -32,7 +31,6 @@ export type Alert = {
   rule_name: string | null;
   event_id: string;
   camera_id: string;
-  preset_type: string;
   status: "pending" | "seen" | "false_positive";
   score: number;
   message: string;
@@ -46,13 +44,12 @@ export type WSAlert = {
   rule_id: string;
   rule_name: string | null;
   camera_id: string;
-  preset_type: string;
   score: number;
   message: string;
   created_at: string;
 };
 
-const BASE = "/api";
+const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ?? "/api";
 
 // ---- Auth ----
 const TOKEN_KEY = "cams.auth.token";
@@ -152,7 +149,6 @@ export async function listRules(): Promise<Rule[]> {
 
 export type AlertFilters = {
   camera_id?: string;
-  preset_type?: Rule["preset_type"];
   since?: string; // ISO datetime
   limit?: number;
 };
@@ -160,7 +156,6 @@ export type AlertFilters = {
 export async function listAlerts(filters: AlertFilters = {}): Promise<Alert[]> {
   const params = new URLSearchParams();
   if (filters.camera_id) params.set("camera_id", filters.camera_id);
-  if (filters.preset_type) params.set("preset_type", filters.preset_type);
   if (filters.since) params.set("since", filters.since);
   if (filters.limit) params.set("limit", String(filters.limit));
   const qs = params.toString();
@@ -171,9 +166,8 @@ export async function listAlerts(filters: AlertFilters = {}): Promise<Alert[]> {
 
 export async function createRule(input: {
   camera_id: string;
-  preset_type: Rule["preset_type"];
   name?: string;
-  custom_prompt?: string;
+  custom_prompt: string;
   zones?: Rule["zones"];
   sensitivity?: number;
   schedule?: Schedule | null;
@@ -239,10 +233,41 @@ export type DiscoveredDevice = {
   url_templates: { label: string; url: string }[];
 };
 
-export async function discoverCameras(): Promise<DiscoveredDevice[]> {
-  const r = await fetch(`${BASE}/onboarding/cameras/discover`, { method: "POST" });
-  if (!r.ok) throw new Error(`discover ${r.status}`);
+export async function discoverCameras(deviceId: string): Promise<DiscoveredDevice[]> {
+  const r = await fetch(`${BASE}/onboarding/cameras/discover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device_id: deviceId }),
+  });
+  if (!r.ok) throw new Error(`discover ${r.status}: ${await r.text()}`);
   return (await r.json()).devices;
+}
+
+export type LocalDevice = { name: string; kind: string; source: string };
+
+export async function listLocalDevices(deviceId: string): Promise<LocalDevice[]> {
+  const r = await fetch(`${BASE}/onboarding/cameras/local-devices`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device_id: deviceId }),
+  });
+  if (!r.ok) throw new Error(`local-devices ${r.status}: ${await r.text()}`);
+  return (await r.json()).local_devices;
+}
+
+export function liveStreamUrl(cameraId: string): string {
+  const t = encodeURIComponent(getToken() ?? "");
+  if (BASE.startsWith("http")) {
+    return BASE.replace(/^http/, "ws") + `/cameras/${cameraId}/live?token=${t}`;
+  }
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${location.host}${BASE}/cameras/${cameraId}/live?token=${t}`;
+}
+
+export async function fetchAgentStatus(deviceId: string): Promise<{ online: boolean }> {
+  const r = await fetch(`${BASE}/onboarding/cameras/agent-status?device_id=${deviceId}`);
+  if (!r.ok) throw new Error(`agent-status ${r.status}`);
+  return r.json();
 }
 
 export type Templates = Record<string, { label: string; url: string }[]>;
@@ -263,13 +288,13 @@ export type ProbeResult = {
   preview_data_url: string | null;
 };
 
-export async function probeStream(rtsp_url: string): Promise<ProbeResult> {
+export async function probeStream(deviceId: string, rtsp_url: string): Promise<ProbeResult> {
   const r = await fetch(`${BASE}/onboarding/cameras/probe`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rtsp_url, include_frame: true }),
+    body: JSON.stringify({ device_id: deviceId, rtsp_url, include_frame: true }),
   });
-  if (!r.ok) throw new Error(`probe ${r.status}`);
+  if (!r.ok) throw new Error(`probe ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
@@ -322,21 +347,26 @@ export async function runDigestNow(): Promise<{ sent: boolean }> {
   return r.json();
 }
 
-export function clipUrl(s3_key: string): string {
-  return `${BASE}/dev/s3/${s3_key}`;
+export async function clipUrl(s3_key: string): Promise<string> {
+  const r = await fetch(`${BASE}/clips/signed-url?key=${encodeURIComponent(s3_key)}`);
+  if (!r.ok) throw new Error(`clip URL ${r.status}`);
+  const j = await r.json();
+  return j.url as string;
 }
 
 export function thumbUrl(cameraId: string, bust = 0): string {
-  // bust is appended as a query param so the browser refetches when we want
-  // a fresh thumbnail (e.g. after a new event has come in).
-  return `${BASE}/cameras/${cameraId}/thumb.jpg${bust ? `?t=${bust}` : ""}`;
+  const t = encodeURIComponent(getToken() ?? "");
+  const ts = bust ? `&ts=${bust}` : "";
+  return `${BASE}/cameras/${cameraId}/thumb.jpg?token=${t}${ts}`;
 }
 
 export function openAlertStream(onMessage: (alert: WSAlert) => void): () => void {
   // Vite proxy forwards /api/alerts/stream over WS. Same-origin URL so no
   // CORS / cookies pain.
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}${BASE}/alerts/stream`);
+  const wsUrl = BASE.startsWith("http")
+    ? BASE.replace(/^http/, "ws") + "/alerts/stream"
+    : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${BASE}/alerts/stream`;
+  const ws = new WebSocket(wsUrl);
   ws.onmessage = (ev) => {
     try {
       const data = JSON.parse(ev.data);
