@@ -11,6 +11,8 @@ the cloud pipeline against a real IP camera.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -24,6 +26,10 @@ from typing import Any
 import cv2
 import httpx
 import numpy as np
+import websockets
+
+from discovery import url_templates_for, ws_discover
+from rtsp_probe import first_frame_jpeg, jpeg_to_data_url, probe_stream
 
 
 def log(msg: str) -> None:
@@ -46,8 +52,9 @@ def heartbeat_loop(cfg: AgentConfig, stop: threading.Event) -> None:
     headers = {"X-Device-Token": cfg.device_token}
     while not stop.is_set():
         try:
+            cameras_status = {cfg.camera_id: True} if cfg.camera_id else {}
             payload = {
-                "cameras_status": {cfg.camera_id: True},
+                "cameras_status": cameras_status,
                 "cpu_pct": 0.0,
                 "ram_mb": 0,
                 "disk_free_mb": 0,
@@ -143,7 +150,211 @@ def motion_score(prev_gray: np.ndarray, gray: np.ndarray) -> float:
     return float(thresh.mean()) / 255.0
 
 
+async def _handle_job(ws, msg: dict[str, Any]) -> None:
+    import base64
+
+    job_id = msg.get("job_id")
+    type_ = msg.get("type")
+    params = msg.get("params") or {}
+    try:
+        if type_ == "snapshot":
+            rtsp = params["rtsp_url"]
+            jpeg = await first_frame_jpeg(rtsp, timeout=8.0)
+            if jpeg is None:
+                await ws.send(
+                    json.dumps({"job_id": job_id, "ok": False, "error": "ffmpeg_failed"})
+                )
+                return
+            await ws.send(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "ok": True,
+                        "result": {"jpeg_b64": base64.b64encode(jpeg).decode()},
+                    }
+                )
+            )
+        elif type_ == "discover":
+            raw = await ws_discover(timeout=float(params.get("timeout", 3.0)))
+            devices = []
+            for d in raw:
+                if not d.get("ip"):
+                    continue
+                d2 = {**d, "url_templates": url_templates_for(d.get("vendor"))}
+                devices.append(d2)
+            await ws.send(
+                json.dumps({"job_id": job_id, "ok": True, "result": {"devices": devices}})
+            )
+        elif type_ == "probe":
+            rtsp = params["rtsp_url"]
+            info = await probe_stream(rtsp, timeout=8.0)
+            preview = None
+            if info.get("ok") and params.get("include_frame", True):
+                jpeg = await first_frame_jpeg(rtsp, timeout=8.0)
+                if jpeg is not None:
+                    preview = jpeg_to_data_url(jpeg)
+            await ws.send(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "ok": True,
+                        "result": {**info, "preview_data_url": preview},
+                    }
+                )
+            )
+        else:
+            await ws.send(
+                json.dumps({"job_id": job_id, "ok": False, "error": f"unknown_type:{type_}"})
+            )
+    except Exception as e:  # noqa: BLE001
+        await ws.send(json.dumps({"job_id": job_id, "ok": False, "error": repr(e)}))
+
+
+_LIVE_TASKS: dict[str, asyncio.Task] = {}
+
+
+async def _live_stream(ws, camera_id: str, rtsp_url: str) -> None:
+    import base64
+
+    log(f"live_start cam={camera_id}")
+    args = [
+        "ffmpeg",
+        "-loglevel", "error",
+        "-rtsp_transport", "tcp",
+        "-i", rtsp_url,
+        "-vf", "fps=24,scale=640:-2",
+        "-c:v", "mjpeg",
+        "-q:v", "7",
+        "-f", "mjpeg",
+        "pipe:1",
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    buf = b""
+    try:
+        assert proc.stdout is not None
+        while True:
+            chunk = await proc.stdout.read(8192)
+            if not chunk:
+                break
+            buf += chunk
+            while True:
+                soi = buf.find(b"\xff\xd8")
+                if soi < 0:
+                    buf = b""
+                    break
+                eoi = buf.find(b"\xff\xd9", soi + 2)
+                if eoi < 0:
+                    buf = buf[soi:]
+                    break
+                jpeg = buf[soi : eoi + 2]
+                buf = buf[eoi + 2 :]
+                try:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "frame",
+                                "camera_id": camera_id,
+                                "data": base64.b64encode(jpeg).decode(),
+                            }
+                        )
+                    )
+                except Exception as e:  # noqa: BLE001
+                    log(f"live send failed cam={camera_id}: {e!r}")
+                    return
+    finally:
+        try:
+            proc.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=3)
+        except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        log(f"live_stop cam={camera_id}")
+
+
+async def _start_live(ws, camera_id: str, rtsp_url: str) -> None:
+    if camera_id in _LIVE_TASKS:
+        return
+    task = asyncio.create_task(_live_stream(ws, camera_id, rtsp_url))
+    _LIVE_TASKS[camera_id] = task
+
+    def _cleanup(_t: asyncio.Task) -> None:
+        _LIVE_TASKS.pop(camera_id, None)
+
+    task.add_done_callback(_cleanup)
+
+
+def _stop_live(camera_id: str) -> None:
+    task = _LIVE_TASKS.pop(camera_id, None)
+    if task and not task.done():
+        task.cancel()
+
+
+async def _control_loop(api_base: str, device_token: str) -> None:
+    ws_url = api_base.replace("http://", "ws://").replace("https://", "wss://")
+    ws_url += f"/agent/control?token={device_token}"
+    while True:
+        try:
+            async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
+                log("control WS connected")
+                async for raw in ws:
+                    try:
+                        msg = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    t = msg.get("type")
+                    if t == "live_start":
+                        asyncio.create_task(
+                            _start_live(ws, msg["camera_id"], msg["rtsp_url"])
+                        )
+                    elif t == "live_stop":
+                        _stop_live(msg["camera_id"])
+                    else:
+                        asyncio.create_task(_handle_job(ws, msg))
+        except Exception as e:  # noqa: BLE001
+            log(f"control WS dropped ({e!r}); reconnecting in 5s")
+            for cam_id in list(_LIVE_TASKS.keys()):
+                _stop_live(cam_id)
+            await asyncio.sleep(5)
+
+
+def control_thread(cfg: AgentConfig, stop: threading.Event) -> None:
+    """Run the asyncio control loop in its own thread alongside the cv2 loop."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    task = loop.create_task(_control_loop(cfg.api_base, cfg.device_token))
+    try:
+        while not stop.is_set():
+            loop.run_until_complete(asyncio.sleep(0.5))
+    finally:
+        task.cancel()
+        loop.run_until_complete(asyncio.sleep(0))
+        loop.close()
+
+
 def run(cfg: AgentConfig) -> None:
+    if not cfg.rtsp_url or not cfg.camera_id:
+        log("control-only mode (no RTSP/camera) — heartbeat + onboarding jobs only")
+        stop = threading.Event()
+        hb = threading.Thread(target=heartbeat_loop, args=(cfg, stop), daemon=True)
+        hb.start()
+        ctl = threading.Thread(target=control_thread, args=(cfg, stop), daemon=True)
+        ctl.start()
+        try:
+            while True:
+                time.sleep(60)
+        except KeyboardInterrupt:
+            stop.set()
+        return
+
     log(f"connecting RTSP: {cfg.rtsp_url}")
     cap = cv2.VideoCapture(cfg.rtsp_url, cv2.CAP_FFMPEG)
     if not cap.isOpened():
@@ -157,6 +368,8 @@ def run(cfg: AgentConfig) -> None:
     stop = threading.Event()
     hb = threading.Thread(target=heartbeat_loop, args=(cfg, stop), daemon=True)
     hb.start()
+    ctl = threading.Thread(target=control_thread, args=(cfg, stop), daemon=True)
+    ctl.start()
 
     prev_gray: np.ndarray | None = None
     last_trigger_at = 0.0
@@ -211,9 +424,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cooldown", type=int, default=15)
     p.add_argument("--heartbeat", type=int, default=30)
     args = p.parse_args()
-    missing = [k for k in ("device_token", "rtsp", "camera_id") if not getattr(args, k)]
-    if missing:
-        p.error(f"missing required args: {missing}")
+    if not args.device_token:
+        p.error("missing --device-token")
     return args
 
 

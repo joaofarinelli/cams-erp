@@ -73,6 +73,28 @@ cat /tmp/cams-erp-events.log           # one JSON per event
 curl http://localhost:8000/alerts       # empty until inference worker exists
 ```
 
+## Windows .exe (PDV)
+
+Build via GitHub Actions: push to `main` ou `workflow_dispatch` em `Build PDV agent (Windows .exe)`. Artifact `cams-agent-windows.zip` aparece na run.
+
+Conteúdo do zip:
+- `cams-agent/cams-agent.exe` + libs
+- `ffmpeg/ffmpeg.exe` + `ffprobe.exe`
+- `run-agent.bat` (editar token/RTSP/camera_id, dar duplo-clique)
+- `README.md`
+
+Local build (Windows host):
+
+```powershell
+cd agent\dev
+pip install -r <(echo opencv-python==4.10.0.84 httpx==0.27.2 numpy==1.26.4 websockets==12.0 pyinstaller==6.10.0)
+pyinstaller agent.spec --noconfirm
+```
+
+Saída em `dist/cams-agent/`. Copiar `ffmpeg.exe` ao lado ou colocar no PATH.
+
+Auto-start no boot (Windows): adicionar atalho de `run-agent.bat` em `shell:startup`.
+
 ## Tunables
 
 - `--motion-threshold 0.02` (0..1, mean of binarized 320x240 frame diff). Raise if false-trigger; lower if motion missed. Confirmed working values for the iM5 SC sub-stream: 0.005-0.02.
