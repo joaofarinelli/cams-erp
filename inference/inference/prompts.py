@@ -1,86 +1,52 @@
-"""Per-preset prompt templates for the VLM inference worker.
+"""System prompt + user-turn template for the VLM inference worker.
 
-System prompts are stable across many requests — they sit at the top of the
-prefix and are cached via cache_control. The user-turn template injects the
-specific zone polygons for the rule being evaluated.
+Rules são 100% custom (descritas em linguagem natural). Sem categorias/presets.
 """
 
 from __future__ import annotations
 
-PRESET_PROMPTS: dict[str, dict] = {
-    "cash_register": {
-        "system": (
-            "Voce analisa videoclipes curtos (3-10s) de cameras de seguranca em "
-            "comercios PME brasileiros. Sua funcao e detectar comportamento "
-            "suspeito no caixa: mao na gaveta sem operacao correspondente no "
-            "PC/POS, retirada de dinheiro sem registro, demora suspeita sobre a "
-            "gaveta aberta, ocultacao de cedulas. Voce retorna JSON estrito "
-            "{alert: bool, score: 0..1, message: pt-BR curto, "
-            "evidence_frame_idx: int|null}. Nao gere falso positivo: so flag "
-            "evidencia clara. Mensagem deve mencionar o frame que motivou a "
-            "decisao."
-        ),
-        "zone_keys": ["gaveta", "pc_operador"],
-    },
-    "kitchen_consumption": {
-        "system": (
-            "Voce analisa videoclipes curtos de cameras em cozinhas de "
-            "restaurante/lanchonete brasileiros. Sua funcao e detectar consumo "
-            "indevido por funcionarios: levar comida ou bebida a boca, beber "
-            "diretamente de garrafa/recipiente, comer da area de preparo. Voce "
-            "retorna JSON {alert, score, message pt-BR, evidence_frame_idx}. "
-            "Nao confunda com prova legitima de tempero."
-        ),
-        "zone_keys": ["ingredients", "prep_area"],
-    },
-    "retail_shelf": {
-        "system": (
-            "Voce analisa videoclipes curtos de cameras em prateleiras de "
-            "varejo brasileiro (mini-mercado, conveniencia). Sua funcao e "
-            "detectar furto em prateleira: pegar item e ocultar no corpo "
-            "(bolso, jaqueta, mochila) ao inves de colocar em cesta/carrinho. "
-            "Voce retorna JSON {alert, score, message pt-BR, "
-            "evidence_frame_idx}."
-        ),
-        "zone_keys": ["shelf"],
-    },
-}
-
 
 CUSTOM_SYSTEM = (
     "Voce analisa videoclipes curtos (3-10s) de cameras de seguranca em "
-    "comercios PME brasileiros. O usuario configurou uma regra customizada "
-    "em linguagem natural; sua funcao e detectar se o comportamento descrito "
-    "ocorreu no video. Voce retorna JSON estrito {alert: bool, score: 0..1, "
-    "message: pt-BR curto, evidence_frame_idx: int|null}. Nao gere falso "
-    "positivo: so flag se a evidencia for clara e diretamente alinhada a "
-    "regra do usuario. Mensagem deve mencionar o frame que motivou a decisao."
+    "comercios PME brasileiros. O usuario configurou uma regra em linguagem "
+    "natural; sua funcao e detectar se o comportamento descrito ocorreu no "
+    "video. Voce retorna JSON estrito {alert: bool, score: 0..1, "
+    "message: pt-BR, evidence_frame_idx: int|null}.\n\n"
+    "POSTURA CONSERVADORA (CRITICO): falso-positivo e PIOR que falso-negativo. "
+    "Na duvida, retorne alert=false. So retorne alert=true quando a evidencia "
+    "VISUAL DIRETA estiver presente em pelo menos UM frame e voce conseguir "
+    "descrever o pixel/posicao especifico que motivou a decisao (ex: 'a gaveta "
+    "esta visivelmente aberta no frame 2, com profundidade interna visivel e "
+    "moedas/notas dentro'). NAO alucine eventos. Se voce nao tem certeza do "
+    "que viu, alert=false. Se a regra menciona um objeto especifico (gaveta, "
+    "porta, mao em mesa) e voce nao consegue identificar visualmente esse "
+    "objeto no frame, alert=false. Frames borrados/escuros/com baixa resolucao "
+    "que impecam confirmacao visual = alert=false.\n\n"
+    "ZONAS DE INTERESSE: se o usuario configurou zonas, elas aparecem como "
+    "POLIGONOS COLORIDOS TRANSLUCIDOS desenhados sobre cada frame, com o nome "
+    "da zona escrito no centro. Restrinja sua analise a essas zonas: o "
+    "comportamento descrito so deve disparar alerta se ocorrer DENTRO da zona "
+    "demarcada. Frames sem zonas devem ser analisados na cena inteira.\n\n"
+    "REGRAS DA MENSAGEM (obrigatorio em TODOS os casos, alert=true OU false):\n"
+    "1. Minimo 2 frases completas em pt-BR (entre 20 e 50 palavras).\n"
+    "2. Descreva o que voce viu: quem (pessoa, funcionario, cliente, sem pessoa), "
+    "qual objeto/contexto, e onde (mesa, balcao, piso). Se houver zonas, cite "
+    "o nome da zona onde a acao ocorreu. Cite o frame especifico (frame 0, 1, "
+    "2 ou 3) que motivou a decisao.\n"
+    "3. Se alert=false, explique por que NAO houve violacao (acao fora da zona, "
+    "comportamento normal, etc).\n"
+    "4. Nunca responda apenas 'Nao detectado' ou similar curto."
 )
 
 
-def build_user_text(preset_type: str, zones: dict, n_frames: int) -> str:
-    """Compose the per-event user text for a preset rule. Frames are appended
-    as image blocks."""
-    cfg = PRESET_PROMPTS[preset_type]
-    zone_lines = []
-    for key in cfg["zone_keys"]:
-        poly = zones.get(key, [])
-        zone_lines.append(f"- {key}: {poly}")
-    zones_block = "\n".join(zone_lines) if zone_lines else "(no zones configured)"
-    return (
-        f"Preset: {preset_type}\n"
-        f"Zonas configuradas (poligonos normalizados 0..1):\n"
-        f"{zones_block}\n\n"
-        f"Analise os {n_frames} frames abaixo em ordem cronologica. "
-        f"Decida se o comportamento suspeito do preset ocorreu."
-    )
-
-
-def build_custom_user_text(custom_prompt: str, zones: dict, n_frames: int) -> str:
-    """Compose the per-event user text for a custom-prompt rule."""
+def build_user_text(custom_prompt: str, zones: dict, n_frames: int) -> str:
+    """Compose the per-event user text. Frames are appended as image blocks."""
     if zones:
-        zone_lines = "\n".join(f"- {k}: {v}" for k, v in zones.items())
-        zones_block = f"Zonas configuradas (poligonos normalizados 0..1):\n{zone_lines}\n\n"
+        names = ", ".join(zones.keys())
+        zones_block = (
+            f"Zonas demarcadas (visiveis como areas coloridas translucidas nos frames): {names}.\n"
+            f"Considere apenas comportamentos que ocorram DENTRO dessas zonas.\n\n"
+        )
     else:
         zones_block = ""
     return (
