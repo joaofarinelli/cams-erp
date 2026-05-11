@@ -20,6 +20,12 @@ class DeviceOut(BaseModel):
     id: UUID
     name: str
     paired: bool
+    edge_yolo_enabled: bool = False
+
+
+class DeviceUpdate(BaseModel):
+    edge_yolo_enabled: bool | None = None
+    name: str | None = None
 
 
 devices_router = APIRouter(prefix="/devices", tags=["devices"])
@@ -32,9 +38,41 @@ async def list_devices(
 ) -> list[DeviceOut]:
     result = await db.execute(select(Device).where(Device.owner_id == user.id))
     return [
-        DeviceOut(id=d.id, name=d.name, paired=d.device_token_hash is not None)
+        DeviceOut(
+            id=d.id,
+            name=d.name,
+            paired=d.device_token_hash is not None,
+            edge_yolo_enabled=d.edge_yolo_enabled,
+        )
         for d in result.scalars().all()
     ]
+
+
+@devices_router.patch("/{device_id}", response_model=DeviceOut)
+async def update_device(
+    device_id: UUID,
+    payload: DeviceUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DeviceOut:
+    result = await db.execute(
+        select(Device).where(Device.id == device_id, Device.owner_id == user.id)
+    )
+    device = result.scalar_one_or_none()
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device not found")
+    if payload.edge_yolo_enabled is not None:
+        device.edge_yolo_enabled = payload.edge_yolo_enabled
+    if payload.name is not None:
+        device.name = payload.name
+    await db.commit()
+    await db.refresh(device)
+    return DeviceOut(
+        id=device.id,
+        name=device.name,
+        paired=device.device_token_hash is not None,
+        edge_yolo_enabled=device.edge_yolo_enabled,
+    )
 
 
 @router.post("/code", response_model=PairCodeOut, status_code=201)

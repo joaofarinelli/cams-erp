@@ -207,11 +207,29 @@ export async function postAlertFeedback(alertId: string, isFalsePositive: boolea
   return r.json();
 }
 
-export type Device = { id: string; name: string; paired: boolean };
+export type Device = {
+  id: string;
+  name: string;
+  paired: boolean;
+  edge_yolo_enabled: boolean;
+};
 
 export async function listDevices(): Promise<Device[]> {
   const r = await fetch(`${BASE}/devices`);
   if (!r.ok) throw new Error(`devices GET ${r.status}`);
+  return r.json();
+}
+
+export async function updateDevice(
+  id: string,
+  patch: { edge_yolo_enabled?: boolean; name?: string },
+): Promise<Device> {
+  const r = await fetch(`${BASE}/devices/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error(`devices PATCH ${r.status}`);
   return r.json();
 }
 

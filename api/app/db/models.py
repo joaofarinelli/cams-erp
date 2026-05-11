@@ -58,6 +58,9 @@ class Device(Base):
     name: Mapped[str] = mapped_column(
         String(120), default="My PDV", server_default=sa.text("'My PDV'")
     )
+    edge_yolo_enabled: Mapped[bool] = mapped_column(
+        default=False, server_default=sa.false()
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

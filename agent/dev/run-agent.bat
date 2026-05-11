@@ -1,21 +1,16 @@
 @echo off
-REM cams-erp PDV agent launcher (Windows tray app).
-REM Edit values below once, double-click to start.
+REM cams-erp PDV agent launcher.
+REM
+REM First run: a janela GUI vai pedir o código de pareamento gerado no painel
+REM web. Depois disso, não precisa editar mais nada — o agent salva o token
+REM em %LOCALAPPDATA%\cams-agent\config.json e busca a lista de câmeras /
+REM zonas / regras direto do servidor. Tudo é controlado pelo painel web.
+REM
+REM (Para mudar API URL ou forçar dev/staging, exporte CAMS_API antes do
+REM start abaixo. Não é necessário em produção.)
 setlocal
 
-set CAMS_API=https://cams-erp-api.fly.dev
-set CAMS_DEVICE_TOKEN=PUT_DEVICE_TOKEN_HERE
-REM Leave RTSP_URL and CAMERA_ID empty for control-only mode (USB cams via web wizard).
-set CAMS_RTSP_URL=
-set CAMS_CAMERA_ID=
-REM Edge YOLO pre-filter: only uploads clips when a person is detected inside
-REM the camera's rule zones. Cuts cloud cost 70-90%% on idle cameras. Set "true"
-REM to enable; leave empty/unset to disable.
-REM set CAMS_EDGE_YOLO=true
-REM set CAMS_EDGE_YOLO_CONF=0.35
-
-REM Bundled ffmpeg
+REM ffmpeg bundled with the release zip.
 set PATH=%~dp0ffmpeg;%PATH%
 
-REM Launch without console window; tray app handles UI + autostart.
 start "" "%~dp0cams-agent\cams-agent.exe"

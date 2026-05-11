@@ -27,3 +27,5 @@ class CameraConfigItem(BaseModel):
 class AgentConfigOut(BaseModel):
     etag: str
     cameras: list[CameraConfigItem]
+    edge_yolo_enabled: bool = False
+    device_name: str | None = None

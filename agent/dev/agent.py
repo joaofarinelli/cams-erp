@@ -50,53 +50,67 @@ def log(msg: str) -> None:
 _SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
-def _edge_yolo_passes(cfg: "AgentConfig", frame: np.ndarray) -> bool:
+def _edge_yolo_passes(cfg: "AgentConfig", camera_id: str, frame: np.ndarray) -> bool:
     """Gate at motion-trigger time. Returns True if upload should proceed.
 
-    False when:
-      * edge YOLO is enabled AND model loaded AND no person in any zone of
-        this camera. Decision is logged either way for observability.
-
-    Always True when edge YOLO is disabled, model is unavailable, or `frame`
-    is invalid — degrade gracefully so we never silently drop events because
-    of a misconfigured agent."""
-    if not cfg.edge_yolo or frame is None:
+    False when edge YOLO is enabled (per-device flag from /agent/config) AND
+    no person is detected inside the camera's rule zones. Logs either way
+    for observability. Degrades open: missing onnxruntime, missing weights,
+    or an invalid frame all return True (no silent drops)."""
+    if not cfg.edge_yolo_enabled or frame is None:
         return True
     from edge_yolo import get_edge_yolo
 
     yolo = get_edge_yolo(cfg.edge_yolo_conf)
     if yolo is None:
-        return True  # onnx missing / runtime missing -> skip filter
-    zones = cfg.camera_zones.get(cfg.camera_id, {}) if cfg.camera_id else {}
+        return True
+    zones = cfg.camera_zones.get(str(camera_id), {})
     in_zone, max_conf = yolo.person_in_zone(frame, zones)
     if in_zone:
-        log(f"[edge] person in zone conf={max_conf:.2f} -> upload")
+        log(f"[edge] cam={camera_id[:8]} person in zone conf={max_conf:.2f} -> upload")
         return True
-    log(f"[edge] no person in zone (max_conf={max_conf:.2f}) -> skip upload")
+    log(f"[edge] cam={camera_id[:8]} no person in zone (max_conf={max_conf:.2f}) -> skip")
     return False
 
 
 class AgentConfig:
-    def __init__(self, args: argparse.Namespace) -> None:
-        self.api_base = args.api.rstrip("/")
-        self.device_token = args.device_token
-        self.rtsp_url = args.rtsp
-        self.camera_id = args.camera_id
-        self.clip_seconds = args.clip_seconds
-        self.motion_threshold = args.motion_threshold
-        self.cooldown = args.cooldown
-        self.heartbeat_interval = args.heartbeat
-        self.edge_yolo = bool(args.edge_yolo)
-        self.edge_yolo_conf = float(args.edge_yolo_conf)
-        # Maps camera_id -> merged dict of all zones across that camera's rules.
-        # Populated/refreshed from /agent/config (set in control loop heartbeat path).
-        self.camera_zones: dict[str, dict] = {}
+    """Runtime config for the agent.
+
+    Camera list, zones, and the edge_yolo toggle are all owned by the cloud
+    (web panel writes them; agent fetches via /agent/config). The local
+    config.json only persists the API URL + device token so the agent can
+    connect on boot."""
+
+    def __init__(
+        self,
+        *,
+        api_base: str,
+        device_token: str,
+        clip_seconds: int = 5,
+        motion_threshold: float = 0.02,
+        cooldown: int = 15,
+        heartbeat_interval: int = 30,
+        edge_yolo_conf: float = 0.35,
+    ) -> None:
+        self.api_base = api_base.rstrip("/")
+        self.device_token = device_token
+        self.clip_seconds = clip_seconds
+        self.motion_threshold = motion_threshold
+        self.cooldown = cooldown
+        self.heartbeat_interval = heartbeat_interval
+        self.edge_yolo_conf = edge_yolo_conf
+        # Pushed by /agent/config refresh:
+        self.edge_yolo_enabled: bool = False
+        self.camera_zones: dict[str, dict] = {}  # camera_id -> merged zones
+        self.cameras: list[dict] = []  # latest [{camera_id, name, rtsp_url, rules}, ...]
+        self.config_etag: str | None = None
+        self.device_name: str | None = None
 
 
-def _refresh_camera_zones(cfg: AgentConfig) -> None:
-    """Pull /agent/config and rebuild cfg.camera_zones (camera_id -> merged
-    zones dict across all enabled rules for that camera). Best-effort; on
-    failure we keep the previous map (edge YOLO falls back to whole-frame)."""
+def refresh_agent_config(cfg: AgentConfig) -> bool:
+    """Pull /agent/config and populate cfg.cameras / cfg.camera_zones /
+    cfg.edge_yolo_enabled / cfg.device_name. Returns True iff the etag changed
+    (i.e. the worker pool needs to resync)."""
     try:
         r = httpx.get(
             f"{cfg.api_base}/agent/config",
@@ -104,26 +118,44 @@ def _refresh_camera_zones(cfg: AgentConfig) -> None:
             timeout=10,
         )
         if r.status_code != 200:
-            return
+            log(f"config refresh: HTTP {r.status_code}")
+            return False
         data = r.json()
-        new_map: dict[str, dict] = {}
-        for cam in data.get("cameras") or []:
-            merged: dict = {}
-            for rule in cam.get("rules") or []:
-                for name, pts in (rule.get("zones") or {}).items():
-                    merged[name] = pts
-            new_map[str(cam.get("camera_id"))] = merged
-        cfg.camera_zones = new_map
     except Exception as e:  # noqa: BLE001
         log(f"config refresh error: {e!r}")
+        return False
+
+    etag = data.get("etag")
+    cameras = data.get("cameras") or []
+    new_zones: dict[str, dict] = {}
+    for cam in cameras:
+        merged: dict = {}
+        for rule in cam.get("rules") or []:
+            for name, pts in (rule.get("zones") or {}).items():
+                merged[name] = pts
+        new_zones[str(cam.get("camera_id"))] = merged
+
+    cfg.cameras = cameras
+    cfg.camera_zones = new_zones
+    cfg.edge_yolo_enabled = bool(data.get("edge_yolo_enabled", False))
+    cfg.device_name = data.get("device_name")
+    changed = etag != cfg.config_etag
+    cfg.config_etag = etag
+    return changed
 
 
-def heartbeat_loop(cfg: AgentConfig, stop: threading.Event) -> None:
+def heartbeat_loop(
+    cfg: AgentConfig,
+    stop: threading.Event,
+    pool: "CameraWorkerPool | None" = None,
+) -> None:
+    """Heartbeat the API every cfg.heartbeat_interval seconds. When the cloud
+    signals a new config_etag, trigger a full refresh + pool resync."""
     headers = {"X-Device-Token": cfg.device_token}
     last_etag: str | None = None
     while not stop.is_set():
         try:
-            cameras_status = {cfg.camera_id: True} if cfg.camera_id else {}
+            cameras_status = pool.health_snapshot() if pool is not None else {}
             payload = {
                 "cameras_status": cameras_status,
                 "cpu_pct": 0.0,
@@ -135,21 +167,24 @@ def heartbeat_loop(cfg: AgentConfig, stop: threading.Event) -> None:
                 f"{cfg.api_base}/agent/heartbeat", json=payload, headers=headers, timeout=10
             )
             log(f"heartbeat -> {r.status_code}")
-            if r.status_code == 200 and cfg.edge_yolo:
+            if r.status_code == 200:
                 etag = r.json().get("config_etag")
-                if etag != last_etag:
-                    _refresh_camera_zones(cfg)
+                if etag != last_etag and pool is not None:
+                    if refresh_agent_config(cfg):
+                        pool.sync(cfg.cameras)
                     last_etag = etag
         except Exception as e:
             log(f"heartbeat error: {e}")
         stop.wait(cfg.heartbeat_interval)
 
 
-def request_upload_url(cfg: AgentConfig, started_at: datetime, duration_ms: int) -> dict[str, Any]:
+def request_upload_url(
+    cfg: AgentConfig, camera_id: str, started_at: datetime, duration_ms: int
+) -> dict[str, Any]:
     r = httpx.post(
         f"{cfg.api_base}/clips/upload-url",
         json={
-            "camera_id": cfg.camera_id,
+            "camera_id": camera_id,
             "started_at": started_at.isoformat(),
             "duration_ms": duration_ms,
         },
@@ -160,11 +195,18 @@ def request_upload_url(cfg: AgentConfig, started_at: datetime, duration_ms: int)
     return r.json()
 
 
-def post_event(cfg: AgentConfig, s3_key: str, motion_score: float, started_at: datetime, duration_ms: int) -> dict[str, Any]:
+def post_event(
+    cfg: AgentConfig,
+    camera_id: str,
+    s3_key: str,
+    motion_score: float,
+    started_at: datetime,
+    duration_ms: int,
+) -> dict[str, Any]:
     r = httpx.post(
         f"{cfg.api_base}/events",
         json={
-            "camera_id": cfg.camera_id,
+            "camera_id": camera_id,
             "s3_key": s3_key,
             "motion_score": motion_score,
             "started_at": started_at.isoformat(),
@@ -470,253 +512,318 @@ def control_thread(cfg: AgentConfig, stop: threading.Event) -> None:
         loop.close()
 
 
-def _snapshot_motion_loop(cfg: AgentConfig, stop: threading.Event, poll_fps: float = 2.0) -> None:
-    """Motion-trigger loop for HTTP snapshot sources. Polls JPEG at `poll_fps`,
-    computes diff, on motion records N seconds of snapshots and encodes to MP4
-    via ffmpeg image2pipe."""
-    interval = 1.0 / poll_fps
-    prev_gray: np.ndarray | None = None
-    last_trigger_at = 0.0
-    width = height = 0
-    log(f"http snapshot motion loop: {cfg.rtsp_url[:60]}")
-    while not stop.is_set():
-        loop_start = time.time()
-        try:
-            jpeg = asyncio.run(http_snapshot_jpeg(cfg.rtsp_url, timeout=5.0))
-        except Exception as e:  # noqa: BLE001
-            log(f"snapshot fetch error: {e!r}")
-            jpeg = None
-        if jpeg is None:
-            time.sleep(interval)
-            continue
-        arr = np.frombuffer(jpeg, dtype=np.uint8)
-        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if frame is None:
-            time.sleep(interval)
-            continue
-        height, width = frame.shape[:2]
-        gray = cv2.cvtColor(cv2.resize(frame, (320, 240)), cv2.COLOR_BGR2GRAY)
-        if prev_gray is None:
-            prev_gray = gray
-        else:
-            score = motion_score(prev_gray, gray)
-            prev_gray = gray
-            now = time.time()
-            if score >= cfg.motion_threshold and (now - last_trigger_at) >= cfg.cooldown:
-                last_trigger_at = now
-                if not _edge_yolo_passes(cfg, frame):
-                    continue
-                log(f"motion {score:.3f} -> recording {cfg.clip_seconds}s (snapshot mode)")
-                started_at = datetime.now(tz=timezone.utc)
-                clip_path = _record_snapshot_clip(cfg, poll_fps)
-                duration_ms = cfg.clip_seconds * 1000
-                try:
-                    res = request_upload_url(cfg, started_at, duration_ms)
-                    upload_clip(res["upload_url"], clip_path)
-                    ev = post_event(cfg, res["s3_key"], score, started_at, duration_ms)
-                    log(f"event ack: id={ev['id']} enqueued={ev['enqueued']}")
-                except httpx.HTTPError as e:
-                    log(f"pipeline error: {e!r}")
-                finally:
-                    for _ in range(5):
-                        try:
-                            clip_path.unlink(missing_ok=True)
-                            break
-                        except PermissionError:
-                            time.sleep(0.5)
-                    prev_gray = None
-        elapsed = time.time() - loop_start
-        sleep_left = interval - elapsed
-        if sleep_left > 0:
-            stop.wait(sleep_left)
+class CameraWorker(threading.Thread):
+    """Motion-trigger loop for one camera. Picks HTTP-snapshot vs cv2-RTSP
+    based on the source URL. Owns its own state (prev_gray, cooldown timer)
+    so multiple cameras run in isolation. Designed to be stop()'d cleanly
+    when the camera is removed from /agent/config."""
 
+    POLL_FPS_SNAPSHOT = 2.0
 
-def _record_snapshot_clip(cfg: AgentConfig, fps: float) -> Path:
-    """Record a clip by polling snapshots at `fps` for cfg.clip_seconds.
-    Pipes JPEGs into ffmpeg image2pipe -> H.264 MP4."""
-    tmp = Path(tempfile.mkstemp(suffix=".mp4")[1])
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-loglevel", "error",
-        "-f", "image2pipe",
-        "-framerate", f"{fps:.2f}",
-        "-vcodec", "mjpeg",
-        "-i", "-",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-        str(tmp),
-    ]
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, creationflags=_SUBPROCESS_FLAGS)
-    assert proc.stdin is not None
-    interval = 1.0 / fps
-    target_frames = int(fps * cfg.clip_seconds)
-    written = 0
-    try:
-        while written < target_frames:
-            t0 = time.time()
-            try:
-                jpeg = asyncio.run(http_snapshot_jpeg(cfg.rtsp_url, timeout=5.0))
-            except Exception:  # noqa: BLE001
-                jpeg = None
-            if jpeg is not None:
-                proc.stdin.write(jpeg)
-                written += 1
-            elapsed = time.time() - t0
-            if elapsed < interval:
-                time.sleep(interval - elapsed)
-    finally:
-        proc.stdin.close()
-        proc.wait(timeout=10)
-    return tmp
+    def __init__(self, cfg: AgentConfig, camera: dict) -> None:
+        super().__init__(daemon=True, name=f"cam-{camera['camera_id'][:8]}")
+        self.cfg = cfg
+        self.camera_id = str(camera["camera_id"])
+        self.rtsp_url = camera.get("rtsp_url") or ""
+        self.name_pretty = camera.get("name") or self.camera_id[:8]
+        self._stop = threading.Event()
+        self._healthy = False
 
+    @property
+    def healthy(self) -> bool:
+        return self._healthy and self.is_alive()
 
-def run(cfg: AgentConfig) -> None:
-    if not cfg.rtsp_url or not cfg.camera_id:
-        log("control-only mode (no RTSP/camera) — heartbeat + onboarding jobs only")
-        stop = threading.Event()
-        hb = threading.Thread(target=heartbeat_loop, args=(cfg, stop), daemon=True)
-        hb.start()
-        ctl = threading.Thread(target=control_thread, args=(cfg, stop), daemon=True)
-        ctl.start()
-        try:
-            while True:
-                time.sleep(60)
-        except KeyboardInterrupt:
-            stop.set()
-        return
+    def stop(self) -> None:
+        self._stop.set()
 
-    log(f"connecting source: {cfg.rtsp_url}")
-    if is_http_snapshot(cfg.rtsp_url):
-        stop = threading.Event()
-        hb = threading.Thread(target=heartbeat_loop, args=(cfg, stop), daemon=True)
-        hb.start()
-        ctl = threading.Thread(target=control_thread, args=(cfg, stop), daemon=True)
-        ctl.start()
-        try:
-            _snapshot_motion_loop(cfg, stop)
-        except KeyboardInterrupt:
-            log("stopping")
-        finally:
-            stop.set()
-        return
-    if is_local(cfg.rtsp_url):
-        rest = cfg.rtsp_url.split(":", 1)[1]
-        if rest.startswith("video="):
-            log("dshow named device: motion-trigger loop not supported via cv2; running in control-only mode")
-            stop = threading.Event()
-            hb = threading.Thread(target=heartbeat_loop, args=(cfg, stop), daemon=True)
-            hb.start()
-            ctl = threading.Thread(target=control_thread, args=(cfg, stop), daemon=True)
-            ctl.start()
-            try:
-                while True:
-                    time.sleep(60)
-            except KeyboardInterrupt:
-                stop.set()
+    def run(self) -> None:  # noqa: D401
+        if not self.rtsp_url:
+            log(f"[{self.name_pretty}] no source URL; worker exiting")
             return
         try:
-            idx = int(rest)
-        except ValueError:
-            log(f"invalid dshow source: {cfg.rtsp_url}")
-            sys.exit(1)
-        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-    else:
-        cap = cv2.VideoCapture(cfg.rtsp_url, cv2.CAP_FFMPEG)
-    if not cap.isOpened():
-        log("source open failed")
-        sys.exit(1)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    log(f"stream: {width}x{height} @ {fps:.1f}fps")
+            if is_http_snapshot(self.rtsp_url):
+                self._run_http_snapshot()
+            elif is_local(self.rtsp_url):
+                log(f"[{self.name_pretty}] dshow source: motion loop not supported, idle")
+                self._stop.wait()
+            else:
+                self._run_rtsp_cv2()
+        except Exception as e:  # noqa: BLE001
+            log(f"[{self.name_pretty}] worker crashed: {e!r}")
+        finally:
+            self._healthy = False
 
-    stop = threading.Event()
-    hb = threading.Thread(target=heartbeat_loop, args=(cfg, stop), daemon=True)
-    hb.start()
-    ctl = threading.Thread(target=control_thread, args=(cfg, stop), daemon=True)
-    ctl.start()
+    # ----- HTTP snapshot path -----------------------------------------
 
-    prev_gray: np.ndarray | None = None
-    last_trigger_at = 0.0
-    try:
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                log("frame read failed; reconnecting in 2s")
-                time.sleep(2)
-                if is_local(cfg.rtsp_url):
-                    cap = cv2.VideoCapture(int(cfg.rtsp_url.split(":", 1)[1]), cv2.CAP_DSHOW)
-                else:
-                    cap = cv2.VideoCapture(cfg.rtsp_url, cv2.CAP_FFMPEG)
+    def _run_http_snapshot(self) -> None:
+        interval = 1.0 / self.POLL_FPS_SNAPSHOT
+        prev_gray: np.ndarray | None = None
+        last_trigger_at = 0.0
+        log(f"[{self.name_pretty}] http snapshot motion loop")
+        self._healthy = True
+        while not self._stop.is_set():
+            loop_start = time.time()
+            try:
+                jpeg = asyncio.run(http_snapshot_jpeg(self.rtsp_url, timeout=5.0))
+            except Exception as e:  # noqa: BLE001
+                log(f"[{self.name_pretty}] snapshot fetch: {e!r}")
+                jpeg = None
+            if jpeg is None:
+                self._stop.wait(interval)
+                continue
+            arr = np.frombuffer(jpeg, dtype=np.uint8)
+            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if frame is None:
+                self._stop.wait(interval)
                 continue
             gray = cv2.cvtColor(cv2.resize(frame, (320, 240)), cv2.COLOR_BGR2GRAY)
             if prev_gray is None:
                 prev_gray = gray
-                continue
-            score = motion_score(prev_gray, gray)
-            prev_gray = gray
-            now = time.time()
-            if score >= cfg.motion_threshold and (now - last_trigger_at) >= cfg.cooldown:
-                last_trigger_at = now
-                if not _edge_yolo_passes(cfg, frame):
-                    continue
-                log(f"motion {score:.3f} -> recording {cfg.clip_seconds}s")
-                started_at = datetime.now(tz=timezone.utc)
-                clip_path = record_clip(cap, fps, (width, height), cfg.clip_seconds)
-                duration_ms = cfg.clip_seconds * 1000
-                try:
-                    res = request_upload_url(cfg, started_at, duration_ms)
-                    log(f"upload-url ok: s3_key={res['s3_key']}")
-                    upload_clip(res["upload_url"], clip_path)
-                    log("clip uploaded")
-                    ev = post_event(cfg, res["s3_key"], score, started_at, duration_ms)
-                    log(f"event ack: id={ev['id']} enqueued={ev['enqueued']}")
-                except httpx.HTTPError as e:
-                    log(f"pipeline error: {e!r}")
-                finally:
-                    for _ in range(5):
-                        try:
-                            clip_path.unlink(missing_ok=True)
-                            break
-                        except PermissionError:
-                            time.sleep(0.5)
+            else:
+                score = motion_score(prev_gray, gray)
+                prev_gray = gray
+                now = time.time()
+                if score >= self.cfg.motion_threshold and (now - last_trigger_at) >= self.cfg.cooldown:
+                    last_trigger_at = now
+                    if not _edge_yolo_passes(self.cfg, self.camera_id, frame):
+                        continue
+                    self._handle_motion_snapshot(score)
                     prev_gray = None
+            elapsed = time.time() - loop_start
+            left = interval - elapsed
+            if left > 0:
+                self._stop.wait(left)
+
+    def _handle_motion_snapshot(self, score: float) -> None:
+        log(f"[{self.name_pretty}] motion {score:.3f} -> recording {self.cfg.clip_seconds}s")
+        started_at = datetime.now(tz=timezone.utc)
+        clip_path = self._record_snapshot_clip(self.POLL_FPS_SNAPSHOT)
+        duration_ms = self.cfg.clip_seconds * 1000
+        try:
+            res = request_upload_url(self.cfg, self.camera_id, started_at, duration_ms)
+            upload_clip(res["upload_url"], clip_path)
+            ev = post_event(self.cfg, self.camera_id, res["s3_key"], score, started_at, duration_ms)
+            log(f"[{self.name_pretty}] event ack: id={ev['id']} enqueued={ev['enqueued']}")
+        except httpx.HTTPError as e:
+            log(f"[{self.name_pretty}] pipeline error: {e!r}")
+        finally:
+            for _ in range(5):
+                try:
+                    clip_path.unlink(missing_ok=True)
+                    break
+                except PermissionError:
+                    time.sleep(0.5)
+
+    def _record_snapshot_clip(self, fps: float) -> Path:
+        tmp = Path(tempfile.mkstemp(suffix=".mp4")[1])
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "image2pipe", "-framerate", f"{fps:.2f}", "-vcodec", "mjpeg",
+            "-i", "-",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            str(tmp),
+        ]
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, creationflags=_SUBPROCESS_FLAGS)
+        assert proc.stdin is not None
+        interval = 1.0 / fps
+        target = int(fps * self.cfg.clip_seconds)
+        written = 0
+        try:
+            while written < target and not self._stop.is_set():
+                t0 = time.time()
+                try:
+                    jpeg = asyncio.run(http_snapshot_jpeg(self.rtsp_url, timeout=5.0))
+                except Exception:  # noqa: BLE001
+                    jpeg = None
+                if jpeg is not None:
+                    proc.stdin.write(jpeg)
+                    written += 1
+                elapsed = time.time() - t0
+                if elapsed < interval:
+                    time.sleep(interval - elapsed)
+        finally:
+            proc.stdin.close()
+            proc.wait(timeout=10)
+        return tmp
+
+    # ----- RTSP cv2 path ----------------------------------------------
+
+    def _run_rtsp_cv2(self) -> None:
+        cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            log(f"[{self.name_pretty}] rtsp open failed")
+            return
+        fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        log(f"[{self.name_pretty}] rtsp {width}x{height} @ {fps:.1f}fps")
+        prev_gray: np.ndarray | None = None
+        last_trigger_at = 0.0
+        self._healthy = True
+        try:
+            while not self._stop.is_set():
+                ok, frame = cap.read()
+                if not ok:
+                    log(f"[{self.name_pretty}] rtsp read failed; reconnect in 2s")
+                    cap.release()
+                    self._stop.wait(2)
+                    if self._stop.is_set():
+                        break
+                    cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+                    continue
+                gray = cv2.cvtColor(cv2.resize(frame, (320, 240)), cv2.COLOR_BGR2GRAY)
+                if prev_gray is None:
+                    prev_gray = gray
+                    continue
+                score = motion_score(prev_gray, gray)
+                prev_gray = gray
+                now = time.time()
+                if score >= self.cfg.motion_threshold and (now - last_trigger_at) >= self.cfg.cooldown:
+                    last_trigger_at = now
+                    if not _edge_yolo_passes(self.cfg, self.camera_id, frame):
+                        continue
+                    log(f"[{self.name_pretty}] motion {score:.3f} -> recording {self.cfg.clip_seconds}s")
+                    started_at = datetime.now(tz=timezone.utc)
+                    clip_path = record_clip(cap, fps, (width, height), self.cfg.clip_seconds)
+                    duration_ms = self.cfg.clip_seconds * 1000
+                    try:
+                        res = request_upload_url(self.cfg, self.camera_id, started_at, duration_ms)
+                        upload_clip(res["upload_url"], clip_path)
+                        ev = post_event(self.cfg, self.camera_id, res["s3_key"], score, started_at, duration_ms)
+                        log(f"[{self.name_pretty}] event ack: id={ev['id']} enqueued={ev['enqueued']}")
+                    except httpx.HTTPError as e:
+                        log(f"[{self.name_pretty}] pipeline error: {e!r}")
+                    finally:
+                        for _ in range(5):
+                            try:
+                                clip_path.unlink(missing_ok=True)
+                                break
+                            except PermissionError:
+                                time.sleep(0.5)
+                        prev_gray = None
+        finally:
+            cap.release()
+
+
+class CameraWorkerPool:
+    """Manages a CameraWorker per camera. Re-syncs from /agent/config when the
+    cloud reports a new etag (web added/removed/edited cameras)."""
+
+    def __init__(self, cfg: AgentConfig) -> None:
+        self.cfg = cfg
+        self._workers: dict[str, CameraWorker] = {}
+        self._lock = threading.Lock()
+
+    def sync(self, cameras: list[dict]) -> None:
+        wanted_by_id = {str(c["camera_id"]): c for c in cameras if c.get("rtsp_url")}
+        with self._lock:
+            # Stop workers no longer in config or whose URL changed.
+            for cid in list(self._workers.keys()):
+                wanted = wanted_by_id.get(cid)
+                if wanted is None or wanted.get("rtsp_url") != self._workers[cid].rtsp_url:
+                    log(f"pool: stopping cam={cid[:8]} ({'removed' if wanted is None else 'url changed'})")
+                    self._workers[cid].stop()
+                    del self._workers[cid]
+            # Spawn new workers.
+            for cid, cam in wanted_by_id.items():
+                if cid not in self._workers:
+                    log(f"pool: starting cam={cid[:8]} ({cam.get('name')})")
+                    w = CameraWorker(self.cfg, cam)
+                    w.start()
+                    self._workers[cid] = w
+
+    def health_snapshot(self) -> dict[str, bool]:
+        with self._lock:
+            return {cid: w.healthy for cid, w in self._workers.items()}
+
+    def stop_all(self) -> None:
+        with self._lock:
+            for w in self._workers.values():
+                w.stop()
+            self._workers.clear()
+
+
+def run(cfg: AgentConfig) -> None:
+    """Entry point. Spawns heartbeat + control WS + a CameraWorker per camera
+    discovered via /agent/config. The pool auto-syncs on every etag change."""
+    log(f"agent starting api={cfg.api_base}")
+    refresh_agent_config(cfg)
+
+    stop = threading.Event()
+    pool = CameraWorkerPool(cfg)
+    pool.sync(cfg.cameras)
+
+    hb = threading.Thread(target=heartbeat_loop, args=(cfg, stop, pool), daemon=True)
+    hb.start()
+    ctl = threading.Thread(target=control_thread, args=(cfg, stop), daemon=True)
+    ctl.start()
+    try:
+        while not stop.is_set():
+            time.sleep(60)
     except KeyboardInterrupt:
         log("stopping")
     finally:
         stop.set()
-        cap.release()
+        pool.stop_all()
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--api", default=os.environ.get("CAMS_API", "http://localhost:8000"))
+    p.add_argument("--api", default=os.environ.get("CAMS_API", ""))
     p.add_argument("--device-token", default=os.environ.get("CAMS_DEVICE_TOKEN", ""))
-    p.add_argument("--rtsp", default=os.environ.get("CAMS_RTSP_URL", ""))
-    p.add_argument("--camera-id", default=os.environ.get("CAMS_CAMERA_ID", ""))
     p.add_argument("--clip-seconds", type=int, default=5)
     p.add_argument("--motion-threshold", type=float, default=0.02)
     p.add_argument("--cooldown", type=int, default=15)
     p.add_argument("--heartbeat", type=int, default=30)
     p.add_argument(
-        "--edge-yolo",
-        action="store_true",
-        default=os.environ.get("CAMS_EDGE_YOLO", "").lower() in ("1", "true", "yes", "on"),
-        help="Run yolov8n locally to skip uploads when no person is in the rule zone.",
-    )
-    p.add_argument(
         "--edge-yolo-conf",
         type=float,
         default=float(os.environ.get("CAMS_EDGE_YOLO_CONF", "0.35")),
     )
-    args = p.parse_args()
-    if not args.device_token:
-        p.error("missing --device-token")
-    return args
+    return p.parse_args()
+
+
+def build_config_from_disk(args: argparse.Namespace | None = None) -> AgentConfig | None:
+    """Pull api_base + device_token from %LOCALAPPDATA%\\cams-agent\\config.json,
+    or auto-migrate from legacy env vars on first run. CLI flags (if provided)
+    win over the file. Returns None when no token can be resolved — caller
+    should launch the pairing GUI."""
+    from config_store import auto_migrate_env, load_config, DEFAULT_API
+
+    auto_migrate_env()  # idempotent
+    stored = load_config()
+    a = args or argparse.Namespace(
+        api="",
+        device_token="",
+        clip_seconds=5,
+        motion_threshold=0.02,
+        cooldown=15,
+        heartbeat=30,
+        edge_yolo_conf=0.35,
+    )
+    api_base = (a.api or stored.get("api_base") or DEFAULT_API).rstrip("/")
+    device_token = a.device_token or stored.get("device_token") or ""
+    if not device_token:
+        return None
+    return AgentConfig(
+        api_base=api_base,
+        device_token=device_token,
+        clip_seconds=a.clip_seconds,
+        motion_threshold=a.motion_threshold,
+        cooldown=a.cooldown,
+        heartbeat_interval=a.heartbeat,
+        edge_yolo_conf=a.edge_yolo_conf,
+    )
 
 
 if __name__ == "__main__":
-    run(AgentConfig(parse_args()))
+    args = parse_args()
+    cfg = build_config_from_disk(args)
+    if cfg is None:
+        sys.stderr.write(
+            "No device token configured. Run the tray app (cams-agent.exe) "
+            "to pair via GUI, or set CAMS_DEVICE_TOKEN.\n"
+        )
+        sys.exit(1)
+    run(cfg)
