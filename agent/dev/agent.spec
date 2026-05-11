@@ -10,13 +10,14 @@ hiddenimports = (
     + collect_submodules("httpx")
     + collect_submodules("pystray")
     + collect_submodules("PIL")
+    + collect_submodules("onnxruntime")
 )
 
 a = Analysis(
     ["tray.py"],
     pathex=["."],
     binaries=[],
-    datas=[],
+    datas=[("yolov8n.onnx", ".")],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

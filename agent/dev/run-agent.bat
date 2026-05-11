@@ -8,6 +8,11 @@ set CAMS_DEVICE_TOKEN=PUT_DEVICE_TOKEN_HERE
 REM Leave RTSP_URL and CAMERA_ID empty for control-only mode (USB cams via web wizard).
 set CAMS_RTSP_URL=
 set CAMS_CAMERA_ID=
+REM Edge YOLO pre-filter: only uploads clips when a person is detected inside
+REM the camera's rule zones. Cuts cloud cost 70-90%% on idle cameras. Set "true"
+REM to enable; leave empty/unset to disable.
+REM set CAMS_EDGE_YOLO=true
+REM set CAMS_EDGE_YOLO_CONF=0.35
 
 REM Bundled ffmpeg
 set PATH=%~dp0ffmpeg;%PATH%

@@ -50,6 +50,32 @@ def log(msg: str) -> None:
 _SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
+def _edge_yolo_passes(cfg: "AgentConfig", frame: np.ndarray) -> bool:
+    """Gate at motion-trigger time. Returns True if upload should proceed.
+
+    False when:
+      * edge YOLO is enabled AND model loaded AND no person in any zone of
+        this camera. Decision is logged either way for observability.
+
+    Always True when edge YOLO is disabled, model is unavailable, or `frame`
+    is invalid — degrade gracefully so we never silently drop events because
+    of a misconfigured agent."""
+    if not cfg.edge_yolo or frame is None:
+        return True
+    from edge_yolo import get_edge_yolo
+
+    yolo = get_edge_yolo(cfg.edge_yolo_conf)
+    if yolo is None:
+        return True  # onnx missing / runtime missing -> skip filter
+    zones = cfg.camera_zones.get(cfg.camera_id, {}) if cfg.camera_id else {}
+    in_zone, max_conf = yolo.person_in_zone(frame, zones)
+    if in_zone:
+        log(f"[edge] person in zone conf={max_conf:.2f} -> upload")
+        return True
+    log(f"[edge] no person in zone (max_conf={max_conf:.2f}) -> skip upload")
+    return False
+
+
 class AgentConfig:
     def __init__(self, args: argparse.Namespace) -> None:
         self.api_base = args.api.rstrip("/")
@@ -60,10 +86,41 @@ class AgentConfig:
         self.motion_threshold = args.motion_threshold
         self.cooldown = args.cooldown
         self.heartbeat_interval = args.heartbeat
+        self.edge_yolo = bool(args.edge_yolo)
+        self.edge_yolo_conf = float(args.edge_yolo_conf)
+        # Maps camera_id -> merged dict of all zones across that camera's rules.
+        # Populated/refreshed from /agent/config (set in control loop heartbeat path).
+        self.camera_zones: dict[str, dict] = {}
+
+
+def _refresh_camera_zones(cfg: AgentConfig) -> None:
+    """Pull /agent/config and rebuild cfg.camera_zones (camera_id -> merged
+    zones dict across all enabled rules for that camera). Best-effort; on
+    failure we keep the previous map (edge YOLO falls back to whole-frame)."""
+    try:
+        r = httpx.get(
+            f"{cfg.api_base}/agent/config",
+            headers={"X-Device-Token": cfg.device_token},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return
+        data = r.json()
+        new_map: dict[str, dict] = {}
+        for cam in data.get("cameras") or []:
+            merged: dict = {}
+            for rule in cam.get("rules") or []:
+                for name, pts in (rule.get("zones") or {}).items():
+                    merged[name] = pts
+            new_map[str(cam.get("camera_id"))] = merged
+        cfg.camera_zones = new_map
+    except Exception as e:  # noqa: BLE001
+        log(f"config refresh error: {e!r}")
 
 
 def heartbeat_loop(cfg: AgentConfig, stop: threading.Event) -> None:
     headers = {"X-Device-Token": cfg.device_token}
+    last_etag: str | None = None
     while not stop.is_set():
         try:
             cameras_status = {cfg.camera_id: True} if cfg.camera_id else {}
@@ -78,6 +135,11 @@ def heartbeat_loop(cfg: AgentConfig, stop: threading.Event) -> None:
                 f"{cfg.api_base}/agent/heartbeat", json=payload, headers=headers, timeout=10
             )
             log(f"heartbeat -> {r.status_code}")
+            if r.status_code == 200 and cfg.edge_yolo:
+                etag = r.json().get("config_etag")
+                if etag != last_etag:
+                    _refresh_camera_zones(cfg)
+                    last_etag = etag
         except Exception as e:
             log(f"heartbeat error: {e}")
         stop.wait(cfg.heartbeat_interval)
@@ -442,6 +504,8 @@ def _snapshot_motion_loop(cfg: AgentConfig, stop: threading.Event, poll_fps: flo
             now = time.time()
             if score >= cfg.motion_threshold and (now - last_trigger_at) >= cfg.cooldown:
                 last_trigger_at = now
+                if not _edge_yolo_passes(cfg, frame):
+                    continue
                 log(f"motion {score:.3f} -> recording {cfg.clip_seconds}s (snapshot mode)")
                 started_at = datetime.now(tz=timezone.utc)
                 clip_path = _record_snapshot_clip(cfg, poll_fps)
@@ -597,6 +661,8 @@ def run(cfg: AgentConfig) -> None:
             now = time.time()
             if score >= cfg.motion_threshold and (now - last_trigger_at) >= cfg.cooldown:
                 last_trigger_at = now
+                if not _edge_yolo_passes(cfg, frame):
+                    continue
                 log(f"motion {score:.3f} -> recording {cfg.clip_seconds}s")
                 started_at = datetime.now(tz=timezone.utc)
                 clip_path = record_clip(cap, fps, (width, height), cfg.clip_seconds)
@@ -635,6 +701,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--motion-threshold", type=float, default=0.02)
     p.add_argument("--cooldown", type=int, default=15)
     p.add_argument("--heartbeat", type=int, default=30)
+    p.add_argument(
+        "--edge-yolo",
+        action="store_true",
+        default=os.environ.get("CAMS_EDGE_YOLO", "").lower() in ("1", "true", "yes", "on"),
+        help="Run yolov8n locally to skip uploads when no person is in the rule zone.",
+    )
+    p.add_argument(
+        "--edge-yolo-conf",
+        type=float,
+        default=float(os.environ.get("CAMS_EDGE_YOLO_CONF", "0.35")),
+    )
     args = p.parse_args()
     if not args.device_token:
         p.error("missing --device-token")
