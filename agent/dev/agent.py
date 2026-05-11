@@ -447,7 +447,12 @@ def _snapshot_motion_loop(cfg: AgentConfig, stop: threading.Event, poll_fps: flo
                 except httpx.HTTPError as e:
                     log(f"pipeline error: {e!r}")
                 finally:
-                    clip_path.unlink(missing_ok=True)
+                    for _ in range(5):
+                        try:
+                            clip_path.unlink(missing_ok=True)
+                            break
+                        except PermissionError:
+                            time.sleep(0.5)
                     prev_gray = None
         elapsed = time.time() - loop_start
         sleep_left = interval - elapsed
