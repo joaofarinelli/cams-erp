@@ -31,6 +31,8 @@ import websockets
 from discovery import url_templates_for, ws_discover
 from rtsp_probe import (
     first_frame_jpeg,
+    http_snapshot_jpeg,
+    is_http_snapshot,
     is_local,
     jpeg_to_data_url,
     list_dshow_devices,
@@ -235,10 +237,40 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
 _LIVE_TASKS: dict[str, asyncio.Task] = {}
 
 
+async def _live_snapshot_loop(ws, camera_id: str, source: str, fps: float = 1.0) -> None:
+    """Live view via HTTP snapshot polling. Used for DVRs with broken RTSP
+    (e.g. Hikvision-clone firmware missing SPS/PPS in-band)."""
+    import base64
+
+    interval = max(0.1, 1.0 / fps)
+    while True:
+        jpeg = await http_snapshot_jpeg(source, timeout=5.0)
+        if jpeg is None:
+            await asyncio.sleep(interval)
+            continue
+        try:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "frame",
+                        "camera_id": camera_id,
+                        "data": base64.b64encode(jpeg).decode(),
+                    }
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            log(f"live send failed cam={camera_id}: {e!r}")
+            return
+        await asyncio.sleep(interval)
+
+
 async def _live_stream(ws, camera_id: str, source: str) -> None:
     import base64
 
     log(f"live_start cam={camera_id} source={source[:50]}")
+    if is_http_snapshot(source):
+        await _live_snapshot_loop(ws, camera_id, source)
+        return
     if is_local(source):
         rest = source.split(":", 1)[1]
         spec = rest if rest.startswith("video=") else f"video={rest}"
@@ -369,6 +401,102 @@ def control_thread(cfg: AgentConfig, stop: threading.Event) -> None:
         loop.close()
 
 
+def _snapshot_motion_loop(cfg: AgentConfig, stop: threading.Event, poll_fps: float = 2.0) -> None:
+    """Motion-trigger loop for HTTP snapshot sources. Polls JPEG at `poll_fps`,
+    computes diff, on motion records N seconds of snapshots and encodes to MP4
+    via ffmpeg image2pipe."""
+    interval = 1.0 / poll_fps
+    prev_gray: np.ndarray | None = None
+    last_trigger_at = 0.0
+    width = height = 0
+    log(f"http snapshot motion loop: {cfg.rtsp_url[:60]}")
+    while not stop.is_set():
+        loop_start = time.time()
+        try:
+            jpeg = asyncio.run(http_snapshot_jpeg(cfg.rtsp_url, timeout=5.0))
+        except Exception as e:  # noqa: BLE001
+            log(f"snapshot fetch error: {e!r}")
+            jpeg = None
+        if jpeg is None:
+            time.sleep(interval)
+            continue
+        arr = np.frombuffer(jpeg, dtype=np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            time.sleep(interval)
+            continue
+        height, width = frame.shape[:2]
+        gray = cv2.cvtColor(cv2.resize(frame, (320, 240)), cv2.COLOR_BGR2GRAY)
+        if prev_gray is None:
+            prev_gray = gray
+        else:
+            score = motion_score(prev_gray, gray)
+            prev_gray = gray
+            now = time.time()
+            if score >= cfg.motion_threshold and (now - last_trigger_at) >= cfg.cooldown:
+                last_trigger_at = now
+                log(f"motion {score:.3f} -> recording {cfg.clip_seconds}s (snapshot mode)")
+                started_at = datetime.now(tz=timezone.utc)
+                clip_path = _record_snapshot_clip(cfg, poll_fps)
+                duration_ms = cfg.clip_seconds * 1000
+                try:
+                    res = request_upload_url(cfg, started_at, duration_ms)
+                    upload_clip(res["upload_url"], clip_path)
+                    ev = post_event(cfg, res["s3_key"], score, started_at, duration_ms)
+                    log(f"event ack: id={ev['id']} enqueued={ev['enqueued']}")
+                except httpx.HTTPError as e:
+                    log(f"pipeline error: {e!r}")
+                finally:
+                    clip_path.unlink(missing_ok=True)
+                    prev_gray = None
+        elapsed = time.time() - loop_start
+        sleep_left = interval - elapsed
+        if sleep_left > 0:
+            stop.wait(sleep_left)
+
+
+def _record_snapshot_clip(cfg: AgentConfig, fps: float) -> Path:
+    """Record a clip by polling snapshots at `fps` for cfg.clip_seconds.
+    Pipes JPEGs into ffmpeg image2pipe -> H.264 MP4."""
+    tmp = Path(tempfile.mkstemp(suffix=".mp4")[1])
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-loglevel", "error",
+        "-f", "image2pipe",
+        "-framerate", f"{fps:.2f}",
+        "-vcodec", "mjpeg",
+        "-i", "-",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        str(tmp),
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    assert proc.stdin is not None
+    interval = 1.0 / fps
+    target_frames = int(fps * cfg.clip_seconds)
+    written = 0
+    try:
+        while written < target_frames:
+            t0 = time.time()
+            try:
+                jpeg = asyncio.run(http_snapshot_jpeg(cfg.rtsp_url, timeout=5.0))
+            except Exception:  # noqa: BLE001
+                jpeg = None
+            if jpeg is not None:
+                proc.stdin.write(jpeg)
+                written += 1
+            elapsed = time.time() - t0
+            if elapsed < interval:
+                time.sleep(interval - elapsed)
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    return tmp
+
+
 def run(cfg: AgentConfig) -> None:
     if not cfg.rtsp_url or not cfg.camera_id:
         log("control-only mode (no RTSP/camera) — heartbeat + onboarding jobs only")
@@ -385,6 +513,19 @@ def run(cfg: AgentConfig) -> None:
         return
 
     log(f"connecting source: {cfg.rtsp_url}")
+    if is_http_snapshot(cfg.rtsp_url):
+        stop = threading.Event()
+        hb = threading.Thread(target=heartbeat_loop, args=(cfg, stop), daemon=True)
+        hb.start()
+        ctl = threading.Thread(target=control_thread, args=(cfg, stop), daemon=True)
+        ctl.start()
+        try:
+            _snapshot_motion_loop(cfg, stop)
+        except KeyboardInterrupt:
+            log("stopping")
+        finally:
+            stop.set()
+        return
     if is_local(cfg.rtsp_url):
         rest = cfg.rtsp_url.split(":", 1)[1]
         if rest.startswith("video="):

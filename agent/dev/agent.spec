@@ -1,4 +1,4 @@
-# PyInstaller spec for cams-erp PDV agent (Windows)
+# PyInstaller spec for cams-erp PDV agent (Windows, tray app)
 # Build: pyinstaller agent.spec
 from PyInstaller.utils.hooks import collect_submodules
 
@@ -8,10 +8,12 @@ hiddenimports = (
     collect_submodules("cv2")
     + collect_submodules("websockets")
     + collect_submodules("httpx")
+    + collect_submodules("pystray")
+    + collect_submodules("PIL")
 )
 
 a = Analysis(
-    ["agent.py"],
+    ["tray.py"],
     pathex=["."],
     binaries=[],
     datas=[],
@@ -37,7 +39,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

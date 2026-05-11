@@ -1,21 +1,16 @@
 @echo off
-REM cams-erp PDV agent launcher (Windows).
-REM Edit the values below once, double-click to start.
+REM cams-erp PDV agent launcher (Windows tray app).
+REM Edit values below once, double-click to start.
+setlocal
 
-set API=https://cams-erp-api.fly.dev
-set DEVICE_TOKEN=PUT_DEVICE_TOKEN_HERE
-set RTSP=
-set CAMERA_ID=
-set HEARTBEAT=30
+set CAMS_API=https://cams-erp-api.fly.dev
+set CAMS_DEVICE_TOKEN=PUT_DEVICE_TOKEN_HERE
+REM Leave RTSP_URL and CAMERA_ID empty for control-only mode (USB cams via web wizard).
+set CAMS_RTSP_URL=
+set CAMS_CAMERA_ID=
 
-REM Add bundled ffmpeg to PATH
+REM Bundled ffmpeg
 set PATH=%~dp0ffmpeg;%PATH%
 
-"%~dp0cams-agent\cams-agent.exe" ^
-  --api %API% ^
-  --device-token %DEVICE_TOKEN% ^
-  --rtsp "%RTSP%" ^
-  --camera-id %CAMERA_ID% ^
-  --heartbeat %HEARTBEAT%
-
-pause
+REM Launch without console window; tray app handles UI + autostart.
+start "" "%~dp0cams-agent\cams-agent.exe"

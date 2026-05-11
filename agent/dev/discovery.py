@@ -139,6 +139,7 @@ URL_TEMPLATES: dict[str, list[dict]] = {
     "hikvision": [
         {"label": "Main (HD)", "url": "rtsp://{user}:{password}@{ip}:554/Streaming/Channels/101"},
         {"label": "Sub (SD)", "url": "rtsp://{user}:{password}@{ip}:554/Streaming/Channels/102"},
+        {"label": "ISAPI snapshot ch1", "url": "http://{user}:{password}@{ip}/ISAPI/Streaming/channels/101/picture"},
     ],
     "intelbras": [
         {"label": "Main", "url": "rtsp://{user}:{password}@{ip}:554/cam/realmonitor?channel=1&subtype=0"},

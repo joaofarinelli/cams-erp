@@ -2,6 +2,7 @@
 
 Source URIs supported:
   - rtsp://...           IP cameras
+  - http(s)://.../picture HTTP snapshot endpoint (e.g. Hikvision ISAPI)
   - dshow:N              Windows DirectShow device index (0,1,...)
   - dshow:video=<name>   Windows DirectShow device by name
 """
@@ -14,10 +15,52 @@ import json
 import re
 import sys
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 
 def is_local(source: str) -> bool:
     return source.startswith("dshow:")
+
+
+def is_http_snapshot(source: str) -> bool:
+    return source.startswith("http://") or source.startswith("https://")
+
+
+def _split_http_auth(source: str) -> tuple[str, tuple[str, str] | None]:
+    """Strip user:pass from URL. Returns (clean_url, (user, password) | None)."""
+    parts = urlsplit(source)
+    if not parts.username:
+        return source, None
+    user = parts.username
+    pw = parts.password or ""
+    netloc = parts.hostname or ""
+    if parts.port:
+        netloc = f"{netloc}:{parts.port}"
+    clean = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    return clean, (user, pw)
+
+
+async def http_snapshot_jpeg(source: str, timeout: float = 8.0) -> bytes | None:
+    """Fetch a single JPEG from an HTTP snapshot endpoint. Tries digest first
+    then falls back to basic auth, since most NVRs/DVRs use digest."""
+    import httpx  # local import to keep ffmpeg-only paths cheap
+
+    url, creds = _split_http_auth(source)
+    auths: list[Any] = [None]
+    if creds is not None:
+        auths = [httpx.DigestAuth(*creds), httpx.BasicAuth(*creds)]
+    try:
+        async with httpx.AsyncClient(timeout=timeout, verify=False) as client:
+            for auth in auths:
+                try:
+                    r = await client.get(url, auth=auth)
+                except httpx.HTTPError:
+                    continue
+                if r.status_code == 200 and r.content[:2] == b"\xff\xd8":
+                    return r.content
+    except Exception:
+        return None
+    return None
 
 
 def _dshow_spec(source: str) -> str:
@@ -83,6 +126,20 @@ async def list_dshow_devices(timeout: float = 3.0) -> list[dict[str, Any]]:
 
 
 async def probe_stream(source: str, timeout: float = 8.0) -> dict[str, Any]:
+    if is_http_snapshot(source):
+        jpeg = await http_snapshot_jpeg(source, timeout=timeout)
+        if jpeg is None:
+            return {"ok": False, "error": "http snapshot fetch failed"}
+        try:
+            import numpy as np  # type: ignore
+            import cv2  # type: ignore
+
+            arr = np.frombuffer(jpeg, dtype=np.uint8)
+            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            h, w = img.shape[:2]
+        except Exception:
+            w, h = 0, 0
+        return {"ok": True, "codec": "mjpeg", "width": w, "height": h, "fps": 0.0}
     if is_local(source):
         # ffprobe + dshow is fragile; do a one-frame extract instead and
         # synthesize stream info from the JPEG dimensions.
@@ -142,6 +199,8 @@ async def probe_stream(source: str, timeout: float = 8.0) -> dict[str, Any]:
 
 
 async def first_frame_jpeg(source: str, timeout: float = 8.0) -> bytes | None:
+    if is_http_snapshot(source):
+        return await http_snapshot_jpeg(source, timeout=timeout)
     args = (
         ["ffmpeg", "-loglevel", "error"]
         + _input_args(source, timeout_us=int(timeout * 1_000_000))
