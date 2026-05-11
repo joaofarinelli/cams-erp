@@ -139,6 +139,13 @@ URL_TEMPLATES: dict[str, list[dict]] = {
     "hikvision": [
         {"label": "Main (HD)", "url": "rtsp://{user}:{password}@{ip}:554/Streaming/Channels/101"},
         {"label": "Sub (SD)", "url": "rtsp://{user}:{password}@{ip}:554/Streaming/Channels/102"},
+        *[
+            {
+                "label": f"ISAPI snapshot ch{ch}",
+                "url": f"http://{{user}}:{{password}}@{{ip}}/ISAPI/Streaming/channels/{ch}01/picture",
+            }
+            for ch in range(1, 17)
+        ],
     ],
     "intelbras": [
         {"label": "Main", "url": "rtsp://{user}:{password}@{ip}:554/cam/realmonitor?channel=1&subtype=0"},
@@ -162,6 +169,9 @@ URL_TEMPLATES: dict[str, list[dict]] = {
         {"label": "ONVIF stream 1", "url": "rtsp://{user}:{password}@{ip}:554/onvif1"},
         {"label": "ONVIF stream 2", "url": "rtsp://{user}:{password}@{ip}:554/onvif2"},
         {"label": "Generic /live", "url": "rtsp://{user}:{password}@{ip}:554/live"},
+    ],
+    "iphone": [
+        {"label": "IP Camera Lite", "url": "rtsp://{user}:{password}@{ip}:8554/live"},
     ],
 }
 
