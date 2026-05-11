@@ -44,6 +44,12 @@ def log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+# Suppress the console window that subprocess.Popen opens on Windows when the
+# parent is a GUI app (PyInstaller console=False). Without this, every ffmpeg
+# spawn flashes a CMD window.
+_SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+
 class AgentConfig:
     def __init__(self, args: argparse.Namespace) -> None:
         self.api_base = args.api.rstrip("/")
@@ -135,7 +141,7 @@ def record_clip(cap: cv2.VideoCapture, fps: float, size: tuple[int, int], second
         "-movflags", "+faststart",
         str(tmp),
     ]
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, creationflags=_SUBPROCESS_FLAGS)
     assert proc.stdin is not None
     target_frames = int(fps * seconds)
     written = 0
@@ -292,6 +298,7 @@ async def _live_stream(ws, camera_id: str, source: str) -> None:
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
+        creationflags=_SUBPROCESS_FLAGS,
     )
     buf = b""
     try:
@@ -478,7 +485,7 @@ def _record_snapshot_clip(cfg: AgentConfig, fps: float) -> Path:
         "-movflags", "+faststart",
         str(tmp),
     ]
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, creationflags=_SUBPROCESS_FLAGS)
     assert proc.stdin is not None
     interval = 1.0 / fps
     target_frames = int(fps * cfg.clip_seconds)

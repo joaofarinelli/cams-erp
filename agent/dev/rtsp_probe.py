@@ -13,9 +13,14 @@ import asyncio
 import base64
 import json
 import re
+import subprocess
 import sys
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
+
+# Hide CMD window when ffmpeg/ffprobe spawn under a windowed (console=False)
+# PyInstaller build on Windows.
+_SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 def is_local(source: str) -> bool:
@@ -103,6 +108,7 @@ async def list_dshow_devices(timeout: float = 3.0) -> list[dict[str, Any]]:
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=_SUBPROCESS_FLAGS,
         )
         _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout + 2)
     except asyncio.TimeoutError:
@@ -167,6 +173,7 @@ async def probe_stream(source: str, timeout: float = 8.0) -> dict[str, Any]:
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=_SUBPROCESS_FLAGS,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout + 2)
     except asyncio.TimeoutError:
@@ -211,6 +218,7 @@ async def first_frame_jpeg(source: str, timeout: float = 8.0) -> bytes | None:
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=_SUBPROCESS_FLAGS,
         )
         stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout + 2)
     except asyncio.TimeoutError:
