@@ -35,7 +35,6 @@ async def create_rule(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Camera not found")
     rule = Rule(
         camera_id=payload.camera_id,
-        preset_type=payload.preset_type,
         name=payload.name,
         enabled=payload.enabled,
         zones=payload.zones,
@@ -43,6 +42,7 @@ async def create_rule(
         cooldown_seconds=payload.cooldown_seconds,
         custom_prompt=payload.custom_prompt,
         schedule=payload.schedule,
+        analysis_intensity=payload.analysis_intensity,
     )
     db.add(rule)
     await db.commit()
@@ -69,7 +69,7 @@ async def update_rule(
     db: AsyncSession = Depends(get_db),
 ) -> Rule:
     rule = await _owned_rule(rule_id, user, db)
-    for field in ("name", "enabled", "zones", "sensitivity", "cooldown_seconds", "custom_prompt", "schedule"):
+    for field in ("name", "enabled", "zones", "sensitivity", "cooldown_seconds", "custom_prompt", "schedule", "analysis_intensity"):
         v = getattr(payload, field)
         if v is not None:
             setattr(rule, field, v)

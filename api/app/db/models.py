@@ -11,12 +11,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 
-class PresetType(StrEnum):
-    cash_register = "cash_register"
-    kitchen_consumption = "kitchen_consumption"
-    retail_shelf = "retail_shelf"
-
-
 class AlertStatus(StrEnum):
     pending = "pending"
     seen = "seen"
@@ -96,14 +90,16 @@ class Rule(Base):
     camera_id: Mapped[UUID] = mapped_column(
         ForeignKey("cameras.id", ondelete="CASCADE"), index=True
     )
-    preset_type: Mapped[PresetType] = mapped_column(Enum(PresetType, name="preset_type"))
     enabled: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
     zones: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=sa.text("'{}'::jsonb"))
     sensitivity: Mapped[int] = mapped_column(default=50, server_default=sa.text("50"))
     cooldown_seconds: Mapped[int] = mapped_column(default=300, server_default=sa.text("300"))
-    custom_prompt: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    custom_prompt: Mapped[str] = mapped_column(String(4000))
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     schedule: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    analysis_intensity: Mapped[str] = mapped_column(
+        String(16), default="normal", server_default=sa.text("'normal'")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

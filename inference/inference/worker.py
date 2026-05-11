@@ -151,19 +151,19 @@ def process_event(event: dict, *, api_base: str, clips_dir: Path, yolo_filter: b
         if not _is_active_now(rule.get("schedule")):
             log(f"  rule={rule['id']} outside schedule, skipping")
             continue
-        preset = rule["preset_type"]
         zones = rule.get("zones", {}) or {}
-        custom_prompt = rule.get("custom_prompt")
+        custom_prompt = rule.get("custom_prompt") or ""
         sensitivity = rule.get("sensitivity")
         yolo_conf = _yolo_confidence_from_sensitivity(sensitivity)
-        label = "custom" if custom_prompt else preset
-        log(f"  scoring rule={rule['id']} type={label} yolo_conf={yolo_conf} sens={sensitivity}")
+        label = rule.get("name") or "sem nome"
+        intensity = rule.get("analysis_intensity") or "normal"
+        log(f"  scoring rule={rule['id']} name={label!r} yolo_conf={yolo_conf} sens={sensitivity} intensity={intensity}")
         try:
             result = score_clip(
-                str(clip_path), preset, zones,
-                custom_prompt=custom_prompt,
+                str(clip_path), custom_prompt, zones,
                 yolo_filter=yolo_filter,
                 yolo_confidence=yolo_conf,
+                intensity=intensity,
             )
         except Exception as e:  # noqa: BLE001
             log(f"  vlm error: {e!r}")
