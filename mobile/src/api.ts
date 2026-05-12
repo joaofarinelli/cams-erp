@@ -27,8 +27,16 @@ export type WSAlert = {
 const cfg = (Constants.expoConfig?.extra ?? {}) as { apiBase?: string };
 export const API_BASE = cfg.apiBase ?? "http://localhost:8000";
 
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const r = await fetch(`${API_BASE}${path}`, init);
+  if (r.status === 412) {
+    throw Object.assign(new Error("terms_update_required"), { status: 412 });
+  }
+  return r;
+}
+
 export async function listAlerts(): Promise<Alert[]> {
-  const r = await fetch(`${API_BASE}/alerts`);
+  const r = await apiFetch("/alerts");
   if (!r.ok) throw new Error(`alerts GET ${r.status}`);
   return r.json();
 }
@@ -42,13 +50,13 @@ export type Subscriber = {
 };
 
 export async function listSubscribers(): Promise<Subscriber[]> {
-  const r = await fetch(`${API_BASE}/me/subscribers`);
+  const r = await apiFetch("/me/subscribers");
   if (!r.ok) throw new Error(`subscribers GET ${r.status}`);
   return r.json();
 }
 
 export async function createSubscriber(kind: Subscriber["kind"], target: string): Promise<Subscriber> {
-  const r = await fetch(`${API_BASE}/me/subscribers`, {
+  const r = await apiFetch("/me/subscribers", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind, target }),
@@ -58,13 +66,13 @@ export async function createSubscriber(kind: Subscriber["kind"], target: string)
 }
 
 export async function deleteSubscriber(id: string): Promise<void> {
-  const r = await fetch(`${API_BASE}/me/subscribers/${id}`, { method: "DELETE" });
+  const r = await apiFetch(`/me/subscribers/${id}`, { method: "DELETE" });
   if (!r.ok) throw new Error(`subscribers DELETE ${r.status}`);
 }
 
 export async function postFeedback(alertId: string, isFalsePositive: boolean): Promise<Alert> {
-  const r = await fetch(
-    `${API_BASE}/alerts/${alertId}/feedback?is_false_positive=${isFalsePositive}`,
+  const r = await apiFetch(
+    `/alerts/${alertId}/feedback?is_false_positive=${isFalsePositive}`,
     { method: "POST" }
   );
   if (!r.ok) throw new Error(`feedback POST ${r.status}`);
@@ -72,10 +80,21 @@ export async function postFeedback(alertId: string, isFalsePositive: boolean): P
 }
 
 export async function clipUrl(s3_key: string): Promise<string> {
-  const r = await fetch(`${API_BASE}/clips/signed-url?key=${encodeURIComponent(s3_key)}`);
+  const r = await apiFetch(`/clips/signed-url?key=${encodeURIComponent(s3_key)}`);
   if (!r.ok) throw new Error(`clip URL ${r.status}`);
   const j = await r.json();
   return j.url as string;
+}
+
+export async function requestDataExport(): Promise<unknown> {
+  const r = await apiFetch("/me/export");
+  if (!r.ok) throw new Error(`export GET ${r.status}`);
+  return r.json();
+}
+
+export async function deleteAccount(): Promise<void> {
+  const r = await apiFetch("/me", { method: "DELETE" });
+  if (!r.ok) throw new Error(`delete-me ${r.status}`);
 }
 
 export function openAlertStream(onMessage: (alert: WSAlert) => void): () => void {

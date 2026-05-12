@@ -20,6 +20,7 @@ export default function RootLayout() {
         <Stack.Screen name="index" options={{ title: "Alertas" }} />
         <Stack.Screen name="alert/[id]" options={{ title: "Alerta" }} />
         <Stack.Screen name="settings" options={{ title: "Notificações" }} />
+        <Stack.Screen name="privacy" options={{ title: "Privacidade & Dados" }} />
       </Stack>
     </>
   );

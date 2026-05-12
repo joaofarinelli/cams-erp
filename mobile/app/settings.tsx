@@ -7,8 +7,10 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from "react-native";
+import { router } from "expo-router";
 import { Subscriber, createSubscriber, deleteSubscriber, listSubscribers } from "../src/api";
 
 export default function SettingsScreen() {
@@ -88,6 +90,11 @@ export default function SettingsScreen() {
           ListEmptyComponent={<Text style={styles.empty}>Nenhum inscrito ainda.</Text>}
         />
       </View>
+
+      <TouchableOpacity style={styles.privacyRow} onPress={() => router.push("/privacy")}>
+        <Text style={styles.privacyRowText}>Privacidade & Dados</Text>
+        <Text style={styles.chevron}>›</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -116,4 +123,15 @@ const styles = StyleSheet.create({
   kind: { fontWeight: "600", width: 28 },
   target: { flex: 1, fontFamily: "monospace" },
   empty: { color: "#888", textAlign: "center", padding: 16 },
+  privacyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#eee",
+  },
+  privacyRowText: { fontSize: 15, color: "#333" },
+  chevron: { fontSize: 20, color: "#aaa" },
 });

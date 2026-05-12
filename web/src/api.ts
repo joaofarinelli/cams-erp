@@ -119,10 +119,10 @@ export async function exportMyData(): Promise<unknown> {
   return r.json();
 }
 
-// Wrap fetch so every API call carries the bearer when present. Same-origin
-// thanks to the Vite proxy.
+// Wrap fetch so every API call carries the bearer when present and intercepts
+// 412 (policy update required). Same-origin thanks to the Vite proxy.
 const _origFetch = window.fetch.bind(window);
-window.fetch = function (input: RequestInfo | URL, init: RequestInit = {}) {
+window.fetch = async function (input: RequestInfo | URL, init: RequestInit = {}) {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   if (url.startsWith(BASE) || url.startsWith(window.location.origin + BASE)) {
     const headers = new Headers(init.headers || {});
@@ -132,8 +132,24 @@ window.fetch = function (input: RequestInfo | URL, init: RequestInit = {}) {
     }
     init = { ...init, headers };
   }
-  return _origFetch(input, init);
+  const response = await _origFetch(input, init);
+  if (response.status === 412) {
+    // Clone so callers that also read the body don't get a consumed stream
+    const body = await response.clone().json().catch(() => ({}));
+    window.dispatchEvent(new CustomEvent("terms-update-required", { detail: body }));
+    throw new Error("terms_update_required");
+  }
+  return response;
 } as typeof fetch;
+
+export async function acceptTerms(version: string): Promise<void> {
+  const r = await fetch(`${BASE}/me/accept-terms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ policy_version: version }),
+  });
+  if (!r.ok) throw new Error(`accept-terms ${r.status}: ${await r.text()}`);
+}
 
 export async function listCameras(): Promise<Camera[]> {
   const r = await fetch(`${BASE}/cameras`);

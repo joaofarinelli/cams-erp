@@ -8,6 +8,7 @@ import {
   AuthUser,
   Camera,
   Rule,
+  acceptTerms,
   fetchMe,
   listAlerts,
   listCameras,
@@ -53,9 +54,16 @@ const NAV: { id: Tab; label: string; icon: React.ComponentType<{ className?: str
 
 export function App() {
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined);
+  const [termsUpdateRequired, setTermsUpdateRequired] = useState(false);
 
   useEffect(() => {
     fetchMe().then((u) => setUser(u)).catch(() => setUser(null));
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setTermsUpdateRequired(true);
+    window.addEventListener("terms-update-required", handler);
+    return () => window.removeEventListener("terms-update-required", handler);
   }, []);
 
   return (
@@ -66,6 +74,25 @@ export function App() {
         <AuthScreen onAuthed={setUser} />
       ) : (
         <Authenticated user={user} onLogout={() => { setToken(null); setUser(null); }} />
+      )}
+      {termsUpdateRequired && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+          <div className="bg-card border border-border rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <h2 className="text-lg font-semibold mb-2">Termos atualizados</h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              Nossa política de privacidade foi atualizada. Você precisa aceitar os novos termos para continuar.
+            </p>
+            <button
+              onClick={async () => {
+                await acceptTerms("v1.0");
+                setTermsUpdateRequired(false);
+              }}
+              className="w-full py-2 px-4 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+            >
+              Aceitar e continuar
+            </button>
+          </div>
+        </div>
       )}
     </ThemeProvider>
   );
