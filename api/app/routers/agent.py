@@ -73,6 +73,8 @@ async def heartbeat(
     db: AsyncSession = Depends(get_db),
 ) -> HeartbeatOut:
     device.last_heartbeat_at = datetime.now(tz=timezone.utc)
+    if payload.agent_version:
+        device.agent_version = payload.agent_version
     cams = (await db.execute(select(Camera).where(Camera.device_id == device.id))).scalars().all()
     for cam in cams:
         cam.online = payload.cameras_status.get(str(cam.id), False)
