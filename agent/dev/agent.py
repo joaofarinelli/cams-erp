@@ -453,11 +453,13 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
                 )
                 return
             tmp = Path(tempfile.mkstemp(suffix=".mp4")[1])
-            fps = max(1.0, len(frames) / max(1.0, (to_ts - from_ts)))
+            src_fps = max(1.0, len(frames) / max(1.0, (to_ts - from_ts)))
+            out_fps = max(src_fps, 10.0)
             cmd = [
                 "ffmpeg", "-y", "-loglevel", "error",
-                "-f", "image2pipe", "-framerate", f"{fps:.2f}", "-vcodec", "mjpeg",
+                "-f", "image2pipe", "-framerate", f"{src_fps:.2f}", "-vcodec", "mjpeg",
                 "-i", "-",
+                "-vf", f"fps={out_fps:.2f}",
                 "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart", str(tmp),
             ]
@@ -944,10 +946,12 @@ class CameraWorker(threading.Thread):
 
     def _record_snapshot_clip(self, fps: float) -> Path:
         tmp = Path(tempfile.mkstemp(suffix=".mp4")[1])
+        out_fps = max(fps, 10.0)
         cmd = [
             "ffmpeg", "-y", "-loglevel", "error",
             "-f", "image2pipe", "-framerate", f"{fps:.2f}", "-vcodec", "mjpeg",
             "-i", "-",
+            "-vf", f"fps={out_fps:.2f}",
             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
             "-movflags", "+faststart",
             str(tmp),
