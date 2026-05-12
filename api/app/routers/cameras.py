@@ -3,13 +3,13 @@ import base64
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic import BaseModel, Field
 
-from app.db.models import Camera, Device, User
+from app.db.models import Camera, ConsentLog, Device, User
 from app.db.session import SessionLocal, get_db
 from app.schemas.cameras import CameraCreate, CameraOut, CameraUpdate
 from app.security.cognito import get_current_user
@@ -118,10 +118,66 @@ async def list_cameras(
     return list(result.scalars().all())
 
 
+_FACE_CONSENT_MSG = (
+    "Reconhecimento facial requer consentimento explícito. Envie face_consent=true."
+)
+_AUDIO_CONSENT_MSG = (
+    "Monitoramento de áudio requer consentimento explícito. Envie audio_consent=true."
+)
+
+
+async def _apply_feature_flags(
+    cam: Camera,
+    payload: CameraUpdate,
+    user: User,
+    request: Request,
+    db: AsyncSession,
+) -> None:
+    """Apply face/audio/retention toggles and record ConsentLog entries as required."""
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent")
+
+    if payload.face_recognition_enabled is True:
+        if not payload.face_consent:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, _FACE_CONSENT_MSG)
+        db.add(
+            ConsentLog(
+                user_id=user.id,
+                doc_type="face_recognition",
+                version="v1.0",
+                ip=ip,
+                user_agent=ua,
+            )
+        )
+        cam.face_recognition_enabled = True
+    elif payload.face_recognition_enabled is False:
+        cam.face_recognition_enabled = False
+
+    if payload.audio_enabled is True:
+        if not payload.audio_consent:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, _AUDIO_CONSENT_MSG)
+        db.add(
+            ConsentLog(
+                user_id=user.id,
+                doc_type="audio_monitoring",
+                version="v1.0",
+                ip=ip,
+                user_agent=ua,
+            )
+        )
+        cam.audio_enabled = True
+    elif payload.audio_enabled is False:
+        cam.audio_enabled = False
+
+    if payload.retention_days is not None:
+        cam.retention_days = payload.retention_days
+
+
 @router.put("/{camera_id}", response_model=CameraOut)
 async def update_camera(
     camera_id: UUID,
     payload: CameraUpdate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Camera:
@@ -140,6 +196,36 @@ async def update_camera(
     if payload.consent_attested:
         cam.consent_attested_at = datetime.now(timezone.utc)
         cam.consent_attested_by_user_id = user.id
+    await _apply_feature_flags(cam, payload, user, request, db)
+    await db.commit()
+    await db.refresh(cam)
+    return cam
+
+
+@router.patch("/{camera_id}", response_model=CameraOut)
+async def patch_camera(
+    camera_id: UUID,
+    payload: CameraUpdate,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Camera:
+    """Partial update — delegates to same logic as PUT."""
+    cam = await _owned_camera(camera_id, user, db)
+    if payload.name is not None:
+        cam.name = payload.name
+    if payload.rtsp_url is not None:
+        cam.rtsp_url_encrypted = encrypt(payload.rtsp_url)
+    if payload.enabled is True:
+        if cam.consent_attested_at is None and not payload.consent_attested:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, _LGPD_CONSENT_MSG)
+        cam.enabled = True
+    elif payload.enabled is False:
+        cam.enabled = False
+    if payload.consent_attested:
+        cam.consent_attested_at = datetime.now(timezone.utc)
+        cam.consent_attested_by_user_id = user.id
+    await _apply_feature_flags(cam, payload, user, request, db)
     await db.commit()
     await db.refresh(cam)
     return cam

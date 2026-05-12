@@ -105,6 +105,9 @@ async def get_config(
                 camera_id=cam.id,
                 name=cam.name,
                 rtsp_url=decrypt(cam.rtsp_url_encrypted),
+                face_recognition_enabled=cam.face_recognition_enabled,
+                audio_enabled=cam.audio_enabled,
+                retention_days=cam.retention_days,
                 rules=[
                     {
                         "id": str(r.id),

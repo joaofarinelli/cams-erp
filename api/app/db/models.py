@@ -143,6 +143,9 @@ class Camera(Base):
     last_frame_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consent_attested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consent_attested_by_user_id: Mapped[UUID | None] = mapped_column(PGUUID, nullable=True)
+    face_recognition_enabled: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    audio_enabled: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    retention_days: Mapped[int] = mapped_column(default=7, server_default=sa.text("7"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

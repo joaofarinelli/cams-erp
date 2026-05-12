@@ -17,6 +17,11 @@ class CameraUpdate(BaseModel):
     rtsp_url: str | None = None
     enabled: bool | None = None
     consent_attested: bool = False
+    face_recognition_enabled: bool | None = None
+    audio_enabled: bool | None = None
+    retention_days: int | None = Field(default=None, ge=1, le=90)
+    face_consent: bool = False
+    audio_consent: bool = False
 
 
 class CameraOut(BaseModel):
@@ -27,6 +32,9 @@ class CameraOut(BaseModel):
     online: bool
     last_frame_at: datetime | None
     consent_attested_at: datetime | None
+    face_recognition_enabled: bool
+    audio_enabled: bool
+    retention_days: int
     created_at: datetime
 
     class Config:

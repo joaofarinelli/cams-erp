@@ -24,6 +24,9 @@ class CameraConfigItem(BaseModel):
     name: str
     rtsp_url: str
     rules: list[dict]
+    face_recognition_enabled: bool = False
+    audio_enabled: bool = False
+    retention_days: int = 7
 
 
 class AgentConfigOut(BaseModel):
