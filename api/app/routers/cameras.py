@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
@@ -69,6 +70,12 @@ async def create_cameras_bulk(
     return created
 
 
+_LGPD_CONSENT_MSG = (
+    "Câmera não pode ser ativada sem atestado de afixação do aviso de monitoramento LGPD. "
+    "Envie consent_attested=true."
+)
+
+
 @router.post("", response_model=CameraOut, status_code=201)
 async def create_camera(
     payload: CameraCreate,
@@ -82,11 +89,18 @@ async def create_camera(
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Device not found")
 
+    if payload.enabled and not payload.consent_attested:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, _LGPD_CONSENT_MSG)
+
     cam = Camera(
         device_id=device.id,
         name=payload.name,
         rtsp_url_encrypted=encrypt(payload.rtsp_url),
+        enabled=payload.enabled,
     )
+    if payload.consent_attested:
+        cam.consent_attested_at = datetime.now(timezone.utc)
+        cam.consent_attested_by_user_id = user.id
     db.add(cam)
     await db.commit()
     await db.refresh(cam)
@@ -116,6 +130,16 @@ async def update_camera(
         cam.name = payload.name
     if payload.rtsp_url is not None:
         cam.rtsp_url_encrypted = encrypt(payload.rtsp_url)
+    if payload.enabled is True:
+        # Consent required: either already attested or attested in this request
+        if cam.consent_attested_at is None and not payload.consent_attested:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, _LGPD_CONSENT_MSG)
+        cam.enabled = True
+    elif payload.enabled is False:
+        cam.enabled = False
+    if payload.consent_attested:
+        cam.consent_attested_at = datetime.now(timezone.utc)
+        cam.consent_attested_by_user_id = user.id
     await db.commit()
     await db.refresh(cam)
     return cam

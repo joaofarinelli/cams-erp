@@ -138,8 +138,11 @@ class Camera(Base):
     )
     name: Mapped[str] = mapped_column(String(120))
     rtsp_url_encrypted: Mapped[str] = mapped_column(String(1024))
+    enabled: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     online: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     last_frame_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consent_attested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consent_attested_by_user_id: Mapped[UUID | None] = mapped_column(PGUUID, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
