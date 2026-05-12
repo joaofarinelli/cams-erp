@@ -419,6 +419,30 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
         await ws.send(json.dumps({"job_id": job_id, "ok": False, "error": repr(e)}))
 
 
+_DEDUP_THRESHOLD = 5  # hamming distance below this counts as duplicate
+_DEDUP_WINDOW_S = 300  # 5 min
+
+
+def _dhash(frame: np.ndarray) -> int:
+    """Difference-hash (Wang/Krawetz). 8x9 grayscale -> 64-bit fingerprint
+    of horizontal gradient. Hamming distance is the standard similarity
+    metric; visually identical frames -> distance 0-3."""
+    if frame.ndim == 3:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = frame
+    small = cv2.resize(gray, (9, 8))
+    h = 0
+    for row in range(8):
+        for col in range(8):
+            h = (h << 1) | int(small[row, col + 1] > small[row, col])
+    return h
+
+
+def _hamming(a: int, b: int) -> int:
+    return bin(a ^ b).count("1")
+
+
 _LIVE_TASKS: dict[str, asyncio.Task] = {}
 
 # Set by tray.py at boot so the control loop can show toast notifications
@@ -621,10 +645,40 @@ class CameraWorker(threading.Thread):
         self.name_pretty = camera.get("name") or self.camera_id[:8]
         self._stop = threading.Event()
         self._healthy = False
+        # Per-cam background-subtraction model. State lives with the worker so
+        # restarting one camera doesn't reset the others' learned scenes.
+        from motion import MotionDetector
+
+        self._motion = MotionDetector()
+        # Perceptual hash of the last uploaded trigger frame; used to skip
+        # back-to-back near-identical scenes (e.g. cliente parado no balcão
+        # gerando 6 events seguidos da mesma cena). 64-bit dhash; we compare
+        # hamming distance against `_DEDUP_THRESHOLD` and `_DEDUP_WINDOW_S`.
+        self._last_phash: int | None = None
+        self._last_phash_at: float = 0.0
 
     @property
     def healthy(self) -> bool:
         return self._healthy and self.is_alive()
+
+    def _is_duplicate_scene(self, frame: np.ndarray) -> bool:
+        """Returns True if this frame is near-identical to the last clip we
+        uploaded for this camera within `_DEDUP_WINDOW_S`. Cliente parado
+        no balcão gera 6 events seguidos sem novidade — pular o re-upload
+        corta storage e VLM cost sem perder nenhum evento novo."""
+        now = time.time()
+        h = _dhash(frame)
+        if (
+            self._last_phash is not None
+            and (now - self._last_phash_at) < _DEDUP_WINDOW_S
+        ):
+            dist = _hamming(self._last_phash, h)
+            if dist < _DEDUP_THRESHOLD:
+                log(f"[{self.name_pretty}] [dedup] skipped duplicate scene (hamming={dist})")
+                return True
+        self._last_phash = h
+        self._last_phash_at = now
+        return False
 
     def stop(self) -> None:
         self._stop.set()
@@ -657,7 +711,6 @@ class CameraWorker(threading.Thread):
 
     def _run_http_snapshot(self) -> None:
         interval = 1.0 / self.POLL_FPS_SNAPSHOT
-        prev_gray: np.ndarray | None = None
         last_trigger_at = 0.0
         log(f"[{self.name_pretty}] http snapshot motion loop")
         self._healthy = True
@@ -677,18 +730,15 @@ class CameraWorker(threading.Thread):
                 self._stop.wait(interval)
                 continue
             gray = cv2.cvtColor(cv2.resize(frame, (320, 240)), cv2.COLOR_BGR2GRAY)
-            if prev_gray is None:
-                prev_gray = gray
-            else:
-                score = motion_score(prev_gray, gray)
-                prev_gray = gray
-                now = time.time()
-                if score >= self.cfg.motion_threshold and (now - last_trigger_at) >= self.cfg.cooldown:
-                    last_trigger_at = now
-                    if not _edge_yolo_passes(self.cfg, self.camera_id, frame):
-                        continue
-                    self._handle_motion_snapshot(score)
-                    prev_gray = None
+            score = self._motion.process(gray)
+            now = time.time()
+            if score >= self.cfg.motion_threshold and (now - last_trigger_at) >= self.cfg.cooldown:
+                last_trigger_at = now
+                if not _edge_yolo_passes(self.cfg, self.camera_id, frame):
+                    continue
+                if self._is_duplicate_scene(frame):
+                    continue
+                self._handle_motion_snapshot(score)
             elapsed = time.time() - loop_start
             left = interval - elapsed
             if left > 0:
@@ -758,7 +808,6 @@ class CameraWorker(threading.Thread):
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         log(f"[{self.name_pretty}] rtsp {width}x{height} @ {fps:.1f}fps")
-        prev_gray: np.ndarray | None = None
         last_trigger_at = 0.0
         self._healthy = True
         try:
@@ -773,15 +822,13 @@ class CameraWorker(threading.Thread):
                     cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
                     continue
                 gray = cv2.cvtColor(cv2.resize(frame, (320, 240)), cv2.COLOR_BGR2GRAY)
-                if prev_gray is None:
-                    prev_gray = gray
-                    continue
-                score = motion_score(prev_gray, gray)
-                prev_gray = gray
+                score = self._motion.process(gray)
                 now = time.time()
                 if score >= self.cfg.motion_threshold and (now - last_trigger_at) >= self.cfg.cooldown:
                     last_trigger_at = now
                     if not _edge_yolo_passes(self.cfg, self.camera_id, frame):
+                        continue
+                    if self._is_duplicate_scene(frame):
                         continue
                     log(f"[{self.name_pretty}] motion {score:.3f} -> recording {self.cfg.clip_seconds}s")
                     started_at = datetime.now(tz=timezone.utc)
@@ -801,7 +848,6 @@ class CameraWorker(threading.Thread):
                                 break
                             except PermissionError:
                                 time.sleep(0.5)
-                        prev_gray = None
         finally:
             cap.release()
 
