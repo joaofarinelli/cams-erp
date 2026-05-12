@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic import BaseModel, Field
@@ -72,20 +72,19 @@ async def heartbeat(
     device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
 ) -> HeartbeatOut:
-    device = await db.get(Device, device.id)
-    device.last_heartbeat_at = datetime.now(tz=timezone.utc)
+    device_vals: dict = {"last_heartbeat_at": datetime.now(tz=timezone.utc)}
     if payload.agent_version:
-        device.agent_version = payload.agent_version
+        device_vals["agent_version"] = payload.agent_version
+    if payload.self_test is not None:
+        device_vals["last_self_test_json"] = payload.self_test
+    if payload.tailscale is not None:
+        current = (await db.get(Device, device.id)).last_self_test_json or {}
+        current["tailscale"] = payload.tailscale
+        device_vals["last_self_test_json"] = current
+    await db.execute(update(Device).where(Device.id == device.id).values(**device_vals))
     cams = (await db.execute(select(Camera).where(Camera.device_id == device.id))).scalars().all()
     for cam in cams:
         cam.online = payload.cameras_status.get(str(cam.id), False)
-    if payload.self_test is not None:
-        device.last_self_test_json = payload.self_test
-    if payload.tailscale is not None:
-        # Stash latest tailnet status alongside self_test for the panel.
-        st = device.last_self_test_json or {}
-        st["tailscale"] = payload.tailscale
-        device.last_self_test_json = st
     await db.commit()
     rules = (
         await db.execute(select(Rule).join(Camera).where(Camera.device_id == device.id))
