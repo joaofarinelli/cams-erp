@@ -23,7 +23,7 @@ async def test_signup_login_me_flow(anon_client: AsyncClient, monkeypatch) -> No
 
     r = await anon_client.post(
         "/auth/signup",
-        json={"email": "alice@example.com", "password": "supersafe123", "name": "Alice"},
+        json={"email": "alice@example.com", "password": "supersafe123", "name": "Alice", "terms_accepted": True},
     )
     assert r.status_code == 201
     body = r.json()
@@ -33,7 +33,7 @@ async def test_signup_login_me_flow(anon_client: AsyncClient, monkeypatch) -> No
 
     # Same email again → 409
     dup = await anon_client.post(
-        "/auth/signup", json={"email": "Alice@example.com", "password": "anotherone111"}
+        "/auth/signup", json={"email": "Alice@example.com", "password": "anotherone111", "terms_accepted": True}
     )
     assert dup.status_code == 409
 

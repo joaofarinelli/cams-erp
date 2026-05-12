@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Alert, AuditLog, Camera, Device, Rule, Subscriber, User
+from app.db.models import Alert, AuditLog, Camera, ConsentLog, Device, Rule, Subscriber, User
 from app.db.session import get_db
 from app.security.cognito import get_current_user
 from app.security.jwt_self import verify_token as verify_self_token
@@ -56,6 +56,13 @@ async def export_my_data(
             .limit(500)
         )
     ).scalars().all()
+    consents = (
+        await db.execute(
+            select(ConsentLog)
+            .where(ConsentLog.user_id == user.id)
+            .order_by(ConsentLog.accepted_at.desc())
+        )
+    ).scalars().all()
 
     def _flat(obj):
         return {
@@ -72,7 +79,33 @@ async def export_my_data(
         "alerts": [_flat(a) for a in al],
         "subscribers": [_flat(s) for s in subs],
         "audit_log": [_flat(a) for a in audit_logs],
+        "consent_log": [_flat(c) for c in consents],
     }
+
+
+class AcceptTermsIn(BaseModel):
+    policy_version: str = Field(default="v1.0")
+
+
+@router.post("/accept-terms", status_code=200)
+async def accept_terms(
+    payload: AcceptTermsIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    for doc_type in ("privacy", "terms"):
+        log = ConsentLog(
+            user_id=user.id,
+            doc_type=doc_type,
+            version=payload.policy_version,
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        db.add(log)
+    user.policy_version = payload.policy_version
+    await db.commit()
+    return {"accepted": True, "version": payload.policy_version}
 
 
 class DeleteMeRequest(BaseModel):

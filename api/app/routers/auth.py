@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import User
+from app.db.models import ConsentLog, User
 from app.db.session import get_db
 from app.security.cognito import get_current_user
 from app.security.jwt_self import issue_token
@@ -18,6 +18,8 @@ class SignupIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     name: str | None = Field(default=None, max_length=120)
+    terms_accepted: bool = Field(default=False)
+    policy_version: str = Field(default="v1.0")
 
 
 class LoginIn(BaseModel):
@@ -49,7 +51,14 @@ def _user_dict(u: User) -> dict:
 
 
 @router.post("/signup", response_model=TokenOut, status_code=201)
-async def signup(payload: SignupIn, db: AsyncSession = Depends(get_db)) -> TokenOut:
+async def signup(
+    payload: SignupIn, request: Request, db: AsyncSession = Depends(get_db)
+) -> TokenOut:
+    if not payload.terms_accepted:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Você deve aceitar os termos de uso e a política de privacidade",
+        )
     email = payload.email.lower().strip()
     existing = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if existing is not None:
@@ -62,6 +71,17 @@ async def signup(payload: SignupIn, db: AsyncSession = Depends(get_db)) -> Token
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    for doc_type in ("privacy", "terms"):
+        log = ConsentLog(
+            user_id=user.id,
+            doc_type=doc_type,
+            version=payload.policy_version,
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        db.add(log)
+    user.policy_version = payload.policy_version
+    await db.commit()
     token = issue_token(user.id, user.email)
     return TokenOut(access_token=token, user=_user_dict(user))
 
