@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 from httpx import AsyncClient
 
-from app.db.models import Alert, AlertStatus, Event, PresetType, Rule
+from app.db.models import Alert, AlertStatus, Event, Rule
 from app.services.whatsapp_inbound import _classify, _extract_message
 
 
@@ -61,8 +61,8 @@ async def test_webhook_marks_pending_alert_seen(
 
     rule = Rule(
         camera_id=seed_camera.id,
-        preset_type=PresetType.cash_register,
         zones={"gaveta": [[0, 0], [1, 1], [1, 0]], "pc_operador": [[0, 0], [1, 1], [1, 0]]},
+        custom_prompt="Detectar comportamento descrito",
         name="Toque no balcao",
     )
     db_session.add(rule)

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from httpx import AsyncClient
 
-from app.db.models import Event, PresetType, Rule
+from app.db.models import Event, Rule
 
 
 async def test_internal_alert_persists_and_publishes(
@@ -14,8 +14,8 @@ async def test_internal_alert_persists_and_publishes(
     get_settings.cache_clear()
     rule = Rule(
         camera_id=seed_camera.id,
-        preset_type=PresetType.cash_register,
         zones={"gaveta": [[0, 0], [1, 1], [1, 0]], "pc_operador": [[0, 0], [1, 1], [1, 0]]},
+        custom_prompt="Detectar comportamento descrito",
     )
     db_session.add(rule)
     await db_session.flush()

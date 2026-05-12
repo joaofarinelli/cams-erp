@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 from httpx import AsyncClient
 
-from app.db.models import Alert, Event, PresetType, Rule
+from app.db.models import Alert, Event, Rule
 
 
 async def test_digest_run_now_with_no_alerts(auth_client: AsyncClient, monkeypatch) -> None:
@@ -41,8 +41,8 @@ async def test_digest_run_now_aggregates_recent_alerts(
 
     rule = Rule(
         camera_id=seed_camera.id,
-        preset_type=PresetType.cash_register,
         zones={"gaveta": [[0, 0], [1, 1], [1, 0]], "pc_operador": [[0, 0], [1, 1], [1, 0]]},
+        custom_prompt="Detectar comportamento descrito",
         name="Toque no balcao",
     )
     db_session.add(rule)

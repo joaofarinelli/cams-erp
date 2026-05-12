@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from httpx import AsyncClient
 
-from app.db.models import Alert, Event, PresetType, Rule
+from app.db.models import Alert, Event, Rule
 
 
 async def test_list_alerts_returns_owners_only(
@@ -10,8 +10,8 @@ async def test_list_alerts_returns_owners_only(
 ) -> None:
     rule = Rule(
         camera_id=seed_camera.id,
-        preset_type=PresetType.cash_register,
         zones={"gaveta": [[0, 0], [1, 1], [1, 0]], "pc_operador": [[0, 0], [1, 1], [1, 0]]},
+        custom_prompt="Detectar comportamento descrito",
     )
     db_session.add(rule)
     await db_session.flush()
@@ -32,5 +32,4 @@ async def test_list_alerts_returns_owners_only(
     assert r.status_code == 200
     items = r.json()
     assert len(items) == 1
-    assert items[0]["preset_type"] == "cash_register"
     assert items[0]["s3_key"] == "clips/x.mp4"

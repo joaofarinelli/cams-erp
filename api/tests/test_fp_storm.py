@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 from httpx import AsyncClient
 
-from app.db.models import Alert, AlertStatus, Event, PresetType, Rule
+from app.db.models import Alert, AlertStatus, Event, Rule
 
 
 async def test_fp_storm_disables_rule_and_notifies(
@@ -15,8 +15,8 @@ async def test_fp_storm_disables_rule_and_notifies(
 
     rule = Rule(
         camera_id=seed_camera.id,
-        preset_type=PresetType.cash_register,
         zones={"gaveta": [[0, 0], [1, 1], [1, 0]], "pc_operador": [[0, 0], [1, 1], [1, 0]]},
+        custom_prompt="Detectar comportamento descrito",
         name="Spammy rule",
     )
     db_session.add(rule)
@@ -63,8 +63,8 @@ async def test_below_fp_threshold_does_not_disable(
 
     rule = Rule(
         camera_id=seed_camera.id,
-        preset_type=PresetType.cash_register,
         zones={"gaveta": [[0, 0], [1, 1], [1, 0]], "pc_operador": [[0, 0], [1, 1], [1, 0]]},
+        custom_prompt="Detectar comportamento descrito",
         name="Healthy rule",
     )
     db_session.add(rule)

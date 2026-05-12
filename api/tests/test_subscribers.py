@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 from httpx import AsyncClient
 
-from app.db.models import Event, PresetType, Rule
+from app.db.models import Event, Rule
 
 
 async def test_create_list_delete_subscriber(auth_client: AsyncClient) -> None:
@@ -51,8 +51,8 @@ async def test_internal_alert_fans_out_to_subscribers(
 
     rule = Rule(
         camera_id=seed_camera.id,
-        preset_type=PresetType.cash_register,
         zones={"gaveta": [[0, 0], [1, 1], [1, 0]], "pc_operador": [[0, 0], [1, 1], [1, 0]]},
+        custom_prompt="Detectar comportamento descrito",
         name="Toque no balcao",
     )
     db_session.add(rule)
