@@ -45,6 +45,8 @@ class User(Base):
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     subscription_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deletion_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 class UsageMonthly(Base):

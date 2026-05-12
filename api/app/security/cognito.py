@@ -47,6 +47,14 @@ _DEV_SUB = "dev-bypass-sub"
 _DEV_EMAIL = "dev@cams-erp.local"
 
 
+def _check_not_deleted(user: User) -> None:
+    if user.deleted_at is not None:
+        raise HTTPException(
+            status_code=410,
+            detail="Account deleted. Contact support to restore within grace period.",
+        )
+
+
 async def _get_or_create_dev_user(db: AsyncSession) -> User:
     result = await db.execute(select(User).where(User.cognito_sub == _DEV_SUB))
     user = result.scalar_one_or_none()
@@ -55,6 +63,7 @@ async def _get_or_create_dev_user(db: AsyncSession) -> User:
         db.add(user)
         await db.commit()
         await db.refresh(user)
+    _check_not_deleted(user)
     return user
 
 
@@ -76,6 +85,7 @@ async def get_current_user(
         user = (await db.execute(select(User).where(User.id == UUID(claims["sub"])))).scalar_one_or_none()
         if user is None:
             raise HTTPException(status_code=401, detail="User no longer exists")
+        _check_not_deleted(user)
         return user
     except ValueError:
         pass
@@ -92,4 +102,5 @@ async def get_current_user(
         db.add(user)
         await db.commit()
         await db.refresh(user)
+    _check_not_deleted(user)
     return user

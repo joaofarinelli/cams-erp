@@ -1,18 +1,24 @@
-"""LGPD basics: export-me and delete-me. The hard work (consent flow,
+"""LGPD basics: export-me, soft-delete-me, and restore-me. The hard work (consent flow,
 retention enforcement on clips on disk / S3, processor contract) lives
 elsewhere; these endpoints satisfy the data-subject-rights minimum."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Alert, AuditLog, Camera, Device, Rule, Subscriber, User
 from app.db.session import get_db
 from app.security.cognito import get_current_user
+from app.security.jwt_self import verify_token as verify_self_token
 
 router = APIRouter(prefix="/me", tags=["me"])
+
+GRACE_PERIOD_DAYS = 30
 
 
 @router.get("/export")
@@ -69,15 +75,65 @@ async def export_my_data(
     }
 
 
-@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+class DeleteMeRequest(BaseModel):
+    reason: str | None = None
+
+
+@router.delete("", status_code=status.HTTP_202_ACCEPTED)
 async def delete_my_account(
+    payload: DeleteMeRequest = DeleteMeRequest(),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
-    """Cascade-delete the user. ondelete=CASCADE on devices/subscribers takes
-    care of children. Clip files on disk are not removed here — that's a
-    background job concern (CAMS_RETENTION_DAYS_CLIPS)."""
+) -> dict:
+    """Soft-delete: sets deleted_at. Hard purge runs after 30-day grace period."""
     fresh = await db.get(User, user.id)
-    if fresh is not None:
-        await db.delete(fresh)
-        await db.commit()
+    if fresh is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    now = datetime.now(timezone.utc)
+    fresh.deleted_at = now
+    fresh.deletion_reason = payload.reason
+    await db.commit()
+    purge_at = now + timedelta(days=GRACE_PERIOD_DAYS)
+    return {
+        "deleted_at": now.isoformat(),
+        "purge_at": purge_at.isoformat(),
+        "message": "Sua conta será permanentemente excluída em 30 dias. Use POST /me/restore para cancelar.",
+    }
+
+
+@router.post("/restore", status_code=200)
+async def restore_account(
+    db: AsyncSession = Depends(get_db),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Restore a soft-deleted account within the 30-day grace period.
+
+    Does NOT use get_current_user because that dependency blocks deleted accounts (410).
+    Manually verifies the self-issued JWT and fetches the user without the deletion check.
+    """
+    if authorization is None or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1]
+
+    try:
+        from uuid import UUID
+        claims = verify_self_token(token)
+        user_id = UUID(claims["sub"])
+    except (ValueError, KeyError):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.deleted_at is None:
+        return {"restored": False, "message": "Account is not deleted"}
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=GRACE_PERIOD_DAYS)
+    if user.deleted_at < cutoff:
+        raise HTTPException(status_code=410, detail="Account permanently deleted")
+
+    user.deleted_at = None
+    user.deletion_reason = None
+    await db.commit()
+    return {"restored": True}
