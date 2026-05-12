@@ -10,6 +10,7 @@ class HeartbeatIn(BaseModel):
     ram_mb: int
     disk_free_mb: int
     agent_version: str
+    self_test: dict | None = None
 
 
 class HeartbeatOut(BaseModel):

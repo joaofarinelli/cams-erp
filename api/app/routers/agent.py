@@ -74,6 +74,8 @@ async def heartbeat(
     cams = (await db.execute(select(Camera).where(Camera.device_id == device.id))).scalars().all()
     for cam in cams:
         cam.online = payload.cameras_status.get(str(cam.id), False)
+    if payload.self_test is not None:
+        device.last_self_test_json = payload.self_test
     await db.commit()
     rules = (
         await db.execute(select(Rule).join(Camera).where(Camera.device_id == device.id))

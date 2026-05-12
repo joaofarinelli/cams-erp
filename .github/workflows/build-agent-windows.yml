@@ -3,10 +3,14 @@ name: Build PDV agent (Windows .exe)
 on:
   push:
     branches: [main, agent-windows-build]
+    tags: ["v*"]
     paths:
       - "agent/dev/**"
       - ".github/workflows/build-agent-windows.yml"
   workflow_dispatch: {}
+
+permissions:
+  contents: write
 
 jobs:
   build:

@@ -110,6 +110,7 @@ class AgentConfig:
         self.cameras: list[dict] = []  # latest [{camera_id, name, rtsp_url, rules}, ...]
         self.config_etag: str | None = None
         self.device_name: str | None = None
+        self.last_self_test: dict | None = None
 
 
 def refresh_agent_config(cfg: AgentConfig) -> bool:
@@ -167,6 +168,7 @@ def heartbeat_loop(
                 "ram_mb": 0,
                 "disk_free_mb": 0,
                 "agent_version": AGENT_VERSION,
+                "self_test": cfg.last_self_test,
             }
             r = httpx.post(
                 f"{cfg.api_base}/agent/heartbeat", json=payload, headers=headers, timeout=10
@@ -799,9 +801,26 @@ def run(cfg: AgentConfig) -> None:
     discovered via /agent/config. The pool auto-syncs on every etag change."""
     log(f"agent starting api={cfg.api_base} version={AGENT_VERSION}")
     import crash_reporter
+    import self_test as self_test_mod
+    import updater
 
     crash_reporter.configure(cfg, AGENT_VERSION)
+    updater.background_check_loop(AGENT_VERSION, on_status=lambda m: log(f"[updater] {m}"))
     refresh_agent_config(cfg)
+
+    # Boot self-test: probe each camera once so we know on day-1 if any URL
+    # is wrong before motion ever fires. Result is shown in tray + posted
+    # in the next heartbeat for the server panel.
+    try:
+        results = self_test_mod.run_self_test(cfg.cameras)
+        cfg.last_self_test = self_test_mod.serialize(results)
+        log(f"self-test: {self_test_mod.summary(results)}")
+        for r in results:
+            if not r.ok:
+                log(f"  [self-test] FAIL {r.name}: {r.message}")
+    except Exception as e:  # noqa: BLE001
+        log(f"self-test failed to run: {e!r}")
+        cfg.last_self_test = None
 
     stop = threading.Event()
     pool = CameraWorkerPool(cfg)

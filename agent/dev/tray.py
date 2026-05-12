@@ -146,6 +146,26 @@ def main() -> None:
     def on_open_logs(_icon, _item):  # noqa: ANN001
         webbrowser.open(str(_log_path()))
 
+    def on_check_update(_icon, _item):  # noqa: ANN001
+        import updater
+        from agent import AGENT_VERSION
+
+        updated, msg = updater.check_and_update(AGENT_VERSION)
+        icon.notify(msg, title="cams-agent — atualização")
+
+    def on_diagnose(_icon, _item):  # noqa: ANN001
+        st = cfg.last_self_test or {}
+        results = st.get("results") or []
+        if not results:
+            icon.notify("Diagnóstico ainda não rodou. Aguarde o boot terminar.", title="cams-agent")
+            return
+        ok = sum(1 for r in results if r.get("ok"))
+        lines = [f"{ok}/{len(results)} câmeras OK", ""]
+        for r in results[:6]:
+            mark = "✓" if r.get("ok") else "✗"
+            lines.append(f"{mark} {r.get('name')}: {r.get('message')}")
+        icon.notify("\n".join(lines), title="Diagnóstico")
+
     def on_status(_icon, _item):  # noqa: ANN001
         stored = load_config()
         msg = (
@@ -175,6 +195,8 @@ def main() -> None:
         APP_NAME,
         menu=pystray.Menu(
             pystray.MenuItem("Status", on_status, default=True),
+            pystray.MenuItem("Diagnóstico", on_diagnose),
+            pystray.MenuItem("Verificar atualização", on_check_update),
             pystray.MenuItem("Open logs", on_open_logs),
             pystray.MenuItem(
                 "Run at startup",
