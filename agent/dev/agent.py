@@ -319,6 +319,31 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
             await ws.send(
                 json.dumps({"job_id": job_id, "ok": True, "result": {"local_devices": local}})
             )
+        elif type_ == "logs":
+            # Return tail of agent.log. Used by the web panel to debug a
+            # remote agent without asking the customer to copy/paste.
+            from config_store import config_dir
+
+            tail = int(params.get("tail") or 200)
+            tail = max(1, min(tail, 2000))
+            log_path = config_dir() / "agent.log"
+            try:
+                with log_path.open("r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()[-tail:]
+                content = "".join(lines)
+            except FileNotFoundError:
+                content = ""
+            except Exception as e:  # noqa: BLE001
+                content = f"[error reading log: {e!r}]"
+            await ws.send(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "ok": True,
+                        "result": {"path": str(log_path), "content": content, "lines": len(content.splitlines())},
+                    }
+                )
+            )
         elif type_ == "probe":
             rtsp = _source(params)
             info = await probe_stream(rtsp, timeout=8.0)

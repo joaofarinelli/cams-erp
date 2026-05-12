@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.schemas.pairing import PairCodeOut, PairVerifyIn, PairVerifyOut
 from app.security.cognito import get_current_user
 from app.security.device_auth import generate_device_token, hash_device_token
+from app.services.agent_control import AgentOfflineError, registry
 
 router = APIRouter(prefix="/pair", tags=["pair"])
 
@@ -26,6 +27,12 @@ class DeviceOut(BaseModel):
 class DeviceUpdate(BaseModel):
     edge_yolo_enabled: bool | None = None
     name: str | None = None
+
+
+class DeviceLogs(BaseModel):
+    path: str
+    content: str
+    lines: int
 
 
 devices_router = APIRouter(prefix="/devices", tags=["devices"])
@@ -72,6 +79,37 @@ async def update_device(
         name=device.name,
         paired=device.device_token_hash is not None,
         edge_yolo_enabled=device.edge_yolo_enabled,
+    )
+
+
+@devices_router.get("/{device_id}/logs", response_model=DeviceLogs)
+async def fetch_device_logs(
+    device_id: UUID,
+    tail: int = 200,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DeviceLogs:
+    """Pull the tail of the remote agent's local log via its control WS. Lets
+    support debug a customer's PDV without asking them to copy/paste."""
+    result = await db.execute(
+        select(Device).where(Device.id == device_id, Device.owner_id == user.id)
+    )
+    device = result.scalar_one_or_none()
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device not found")
+    try:
+        resp = await registry.call(
+            str(device.id), "logs", {"tail": tail}, timeout=10.0
+        )
+    except AgentOfflineError:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Agent offline")
+    if not resp.get("ok"):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, resp.get("error") or "Agent error")
+    res = resp.get("result") or {}
+    return DeviceLogs(
+        path=res.get("path", ""),
+        content=res.get("content", ""),
+        lines=int(res.get("lines") or 0),
     )
 
 
