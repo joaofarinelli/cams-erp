@@ -76,6 +76,11 @@ async def heartbeat(
         cam.online = payload.cameras_status.get(str(cam.id), False)
     if payload.self_test is not None:
         device.last_self_test_json = payload.self_test
+    if payload.tailscale is not None:
+        # Stash latest tailnet status alongside self_test for the panel.
+        st = device.last_self_test_json or {}
+        st["tailscale"] = payload.tailscale
+        device.last_self_test_json = st
     await db.commit()
     rules = (
         await db.execute(select(Rule).join(Camera).where(Camera.device_id == device.id))

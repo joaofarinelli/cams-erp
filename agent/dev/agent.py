@@ -162,6 +162,13 @@ def heartbeat_loop(
     while not stop.is_set():
         try:
             cameras_status = pool.health_snapshot() if pool is not None else {}
+            ts_info = None
+            try:
+                import tailscale as ts_mod
+
+                ts_info = ts_mod.status()
+            except Exception:  # noqa: BLE001
+                ts_info = None
             payload = {
                 "cameras_status": cameras_status,
                 "cpu_pct": 0.0,
@@ -169,6 +176,7 @@ def heartbeat_loop(
                 "disk_free_mb": 0,
                 "agent_version": AGENT_VERSION,
                 "self_test": cfg.last_self_test,
+                "tailscale": ts_info,
             }
             r = httpx.post(
                 f"{cfg.api_base}/agent/heartbeat", json=payload, headers=headers, timeout=10
@@ -338,6 +346,49 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
             local = await list_dshow_devices()
             await ws.send(
                 json.dumps({"job_id": job_id, "ok": True, "result": {"local_devices": local}})
+            )
+        elif type_ == "audio_push":
+            # Two-way audio: the web operator records a short Opus blob,
+            # we receive base64 audio and play it back through the
+            # camera's ONVIF profile-T backchannel. Camera support
+            # varies wildly; treat failure as non-fatal so the UI shows
+            # a clean "unsupported" instead of crashing the agent.
+            import base64 as _b64
+
+            target_url = params.get("backchannel_url") or ""
+            audio_b64 = params.get("audio_b64") or ""
+            if not target_url or not audio_b64:
+                await ws.send(
+                    json.dumps({"job_id": job_id, "ok": False, "error": "bad_params"})
+                )
+                return
+            try:
+                audio = _b64.b64decode(audio_b64)
+            except Exception:  # noqa: BLE001
+                await ws.send(
+                    json.dumps({"job_id": job_id, "ok": False, "error": "bad_audio"})
+                )
+                return
+            tmp = Path(tempfile.mkstemp(suffix=".webm")[1])
+            tmp.write_bytes(audio)
+            try:
+                cmd = [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-i", str(tmp),
+                    "-c:a", "aac", "-ar", "8000", "-ac", "1",
+                    "-f", "rtsp", "-rtsp_transport", "tcp",
+                    target_url,
+                ]
+                rc = subprocess.run(
+                    cmd, creationflags=_SUBPROCESS_FLAGS, timeout=15
+                ).returncode
+                ok = rc == 0
+            except Exception as e:  # noqa: BLE001
+                ok = False
+            finally:
+                tmp.unlink(missing_ok=True)
+            await ws.send(
+                json.dumps({"job_id": job_id, "ok": ok})
             )
         elif type_ == "seek_clip":
             # Rebuild a clip from the local ring buffer between two
