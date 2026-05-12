@@ -1,18 +1,20 @@
 import asyncio
-from pathlib import Path
+import base64
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Camera, Device, Event, User
-from app.db.session import get_db
+from pydantic import BaseModel, Field
+
+from app.db.models import Camera, Device, User
+from app.db.session import SessionLocal, get_db
 from app.schemas.cameras import CameraCreate, CameraOut, CameraUpdate
 from app.security.cognito import get_current_user
+from app.security.jwt_self import verify_token
+from app.services.agent_control import AgentOfflineError, registry
 from app.services.kms import decrypt, encrypt
-
-CLIPS_DIR = Path("/tmp/cams-erp-clips")
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -25,6 +27,46 @@ async def _owned_camera(camera_id: UUID, user: User, db: AsyncSession) -> Camera
     if cam is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Camera not found")
     return cam
+
+
+class BulkCameraItem(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    rtsp_url: str = Field(min_length=1)
+
+
+class BulkCameraCreate(BaseModel):
+    device_id: UUID
+    cameras: list[BulkCameraItem] = Field(min_length=1, max_length=64)
+
+
+@router.post("/bulk", response_model=list[CameraOut], status_code=201)
+async def create_cameras_bulk(
+    payload: BulkCameraCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[Camera]:
+    """Create N cameras at once for the same device. Used by the wizard after
+    ONVIF discovery + bulk credential probe finds working URLs for each
+    camera in one go, so the customer doesn't paste user/senha N times."""
+    result = await db.execute(
+        select(Device).where(Device.id == payload.device_id, Device.owner_id == user.id)
+    )
+    device = result.scalar_one_or_none()
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device not found")
+    created: list[Camera] = []
+    for item in payload.cameras:
+        cam = Camera(
+            device_id=device.id,
+            name=item.name,
+            rtsp_url_encrypted=encrypt(item.rtsp_url),
+        )
+        db.add(cam)
+        created.append(cam)
+    await db.commit()
+    for cam in created:
+        await db.refresh(cam)
+    return created
 
 
 @router.post("", response_model=CameraOut, status_code=201)
@@ -82,52 +124,52 @@ async def update_camera(
 @router.get("/{camera_id}/thumb.jpg")
 async def camera_thumbnail(
     camera_id: UUID,
-    user: User = Depends(get_current_user),
+    token: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Return a JPEG of the most recent uploaded clip's middle frame.
+    """Return a JPEG snapshot of the camera. Asks the on-prem agent to grab
+    a single frame via RTSP — no dependency on a recorded clip.
 
-    Used by the web polygon editor and the camera list. 404 if no clip has
-    been uploaded yet for this camera. Extracted with ffmpeg on the fly —
-    cheap (<100ms) for short clips."""
-    cam = await _owned_camera(camera_id, user, db)
+    Auth: JWT in the `?token=` query string (since <img> tags can't send
+    Authorization headers).
+    """
+    try:
+        user_id = verify_token(token)["sub"]
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token") from e
+
     stmt = (
-        select(Event)
-        .where(Event.camera_id == cam.id)
-        .order_by(Event.created_at.desc())
-        .limit(1)
+        select(Camera, Device)
+        .join(Device, Camera.device_id == Device.id)
+        .where(Camera.id == camera_id, Device.owner_id == user_id)
     )
-    event = (await db.execute(stmt)).scalar_one_or_none()
-    if event is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "No clip available yet")
-    clip_path = CLIPS_DIR / event.s3_key
-    if not clip_path.exists():
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Clip missing on disk")
+    row = (await db.execute(stmt)).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Camera not found")
+    cam, device = row
+    rtsp_url = decrypt(cam.rtsp_url_encrypted)
+    device_id = str(device.id)
 
-    proc = await asyncio.create_subprocess_exec(
-        "ffmpeg",
-        "-loglevel", "error",
-        "-ss", "1",
-        "-i", str(clip_path),
-        "-frames:v", "1",
-        "-vf", "scale=640:-2",
-        "-f", "image2",
-        "-c:v", "mjpeg",
-        "-y",
-        "pipe:1",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0 or not stdout:
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            f"ffmpeg failed: {stderr.decode(errors='replace')[:200]}",
-        )
+    if not registry.is_online(device_id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "agent_offline")
+    try:
+        resp = await registry.call(device_id, "snapshot", {"rtsp_url": rtsp_url}, timeout=15.0)
+    except AgentOfflineError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, "agent_offline") from e
+    except asyncio.TimeoutError as e:
+        raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "agent_timeout") from e
+
+    if not resp.get("ok"):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, resp.get("error", "agent_error"))
+    b64 = resp.get("result", {}).get("jpeg_b64", "")
+    try:
+        jpeg = base64.b64decode(b64)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "invalid jpeg") from e
     return Response(
-        content=stdout,
+        content=jpeg,
         media_type="image/jpeg",
-        headers={"Cache-Control": "private, max-age=10"},
+        headers={"Cache-Control": "private, max-age=15"},
     )
 
 
@@ -140,3 +182,45 @@ async def delete_camera(
     cam = await _owned_camera(camera_id, user, db)
     await db.delete(cam)
     await db.commit()
+
+
+@router.websocket("/{camera_id}/live")
+async def camera_live(ws: WebSocket, camera_id: UUID, token: str = Query(...)) -> None:
+    """Live MJPEG stream proxied from the on-prem agent. Browser sends JWT in
+    query (WS can't carry Authorization header). API resolves camera ownership,
+    asks the agent to start the ffmpeg pipe, broadcasts incoming frames as
+    binary WS messages."""
+    try:
+        claims = verify_token(token)
+        user_id = claims["sub"]
+    except Exception:  # noqa: BLE001
+        await ws.close(code=4401)
+        return
+
+    async with SessionLocal() as db:
+        stmt = (
+            select(Camera, Device)
+            .join(Device, Camera.device_id == Device.id)
+            .where(Camera.id == camera_id, Device.owner_id == user_id)
+        )
+        row = (await db.execute(stmt)).first()
+        if row is None:
+            await ws.close(code=4404)
+            return
+        cam, device = row
+        rtsp_url = decrypt(cam.rtsp_url_encrypted)
+        device_id = str(device.id)
+
+    if not registry.is_online(device_id):
+        await ws.close(code=4409)
+        return
+
+    await ws.accept()
+    await registry.add_viewer(str(camera_id), device_id, rtsp_url, ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await registry.remove_viewer(str(camera_id), ws)

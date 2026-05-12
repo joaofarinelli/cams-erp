@@ -212,6 +212,15 @@ def main() -> None:
     if sys.platform == "win32" and not autostart_enabled():
         set_autostart(True)
 
+    # Wire the notifier so the control loop can show native Windows toasts
+    # when the API pushes alert_pushed events.
+    try:
+        from notifier import get_notifier
+
+        agent.set_notifier(get_notifier(icon))
+    except Exception as e:  # noqa: BLE001
+        agent.log(f"notifier setup failed: {e!r}")
+
     icon.run()
 
 

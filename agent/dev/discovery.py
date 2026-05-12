@@ -176,6 +176,39 @@ URL_TEMPLATES: dict[str, list[dict]] = {
 }
 
 
+async def probe_credentials(
+    ip: str,
+    vendor: str | None,
+    credentials: list[tuple[str, str]],
+    *,
+    timeout: float = 5.0,
+) -> dict | None:
+    """Try each (user, password) against vendor's known templates. Returns the
+    first {label, url} that responds 200 with a valid JPEG (HTTP snapshot) or
+    a probable RTSP open (we only probe HTTP here; RTSP requires ffprobe and
+    is slow). Used by the wizard to skip per-camera credential entry when the
+    customer reuses one master password across the DVR's channels."""
+    from rtsp_probe import http_snapshot_jpeg
+
+    templates = url_templates_for(vendor)
+    # Filter to HTTP-snapshot only (RTSP probe is expensive; we want fast bulk add).
+    http_templates = [t for t in templates if t["url"].startswith("http")]
+    if not http_templates:
+        return None
+    for user, password in credentials:
+        for tpl in http_templates:
+            url = (
+                tpl["url"]
+                .replace("{user}", user)
+                .replace("{password}", password)
+                .replace("{ip}", ip)
+            )
+            jpeg = await http_snapshot_jpeg(url, timeout=timeout)
+            if jpeg and jpeg[:2] == b"\xff\xd8":
+                return {"label": tpl["label"], "url": url, "user": user}
+    return None
+
+
 def url_templates_for(vendor: str | None) -> list[dict]:
     if vendor and vendor in URL_TEMPLATES:
         return URL_TEMPLATES[vendor] + URL_TEMPLATES["generic"]

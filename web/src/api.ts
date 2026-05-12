@@ -282,6 +282,43 @@ export function liveStreamUrl(cameraId: string): string {
   return `${proto}://${location.host}${BASE}/cameras/${cameraId}/live?token=${t}`;
 }
 
+export type BulkProbeMatch = {
+  ip: string;
+  name?: string | null;
+  vendor?: string | null;
+  ok: boolean;
+  label?: string | null;
+  url?: string | null;
+  user?: string | null;
+};
+
+export async function bulkProbeCameras(
+  deviceId: string,
+  ips: { ip: string; vendor?: string | null; name?: string | null }[],
+  credentials: [string, string][],
+): Promise<BulkProbeMatch[]> {
+  const r = await fetch(`${BASE}/onboarding/cameras/bulk-probe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device_id: deviceId, ips, credentials }),
+  });
+  if (!r.ok) throw new Error(`bulk-probe ${r.status}: ${await r.text()}`);
+  return (await r.json()).matches;
+}
+
+export async function createCamerasBulk(
+  deviceId: string,
+  cameras: { name: string; rtsp_url: string }[],
+): Promise<Camera[]> {
+  const r = await fetch(`${BASE}/cameras/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device_id: deviceId, cameras }),
+  });
+  if (!r.ok) throw new Error(`cameras/bulk ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
 export async function fetchAgentStatus(deviceId: string): Promise<{ online: boolean }> {
   const r = await fetch(`${BASE}/onboarding/cameras/agent-status?device_id=${deviceId}`);
   if (!r.ok) throw new Error(`agent-status ${r.status}`);

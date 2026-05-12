@@ -117,6 +117,57 @@ async def local_devices(
     )
 
 
+class BulkProbeIp(BaseModel):
+    ip: str
+    vendor: str | None = None
+    name: str | None = None
+
+
+class BulkProbeIn(BaseModel):
+    device_id: UUID
+    ips: list[BulkProbeIp] = Field(min_length=1, max_length=64)
+    credentials: list[list[str]] = Field(min_length=1, max_length=10)
+
+
+class BulkProbeMatch(BaseModel):
+    ip: str
+    name: str | None = None
+    vendor: str | None = None
+    ok: bool
+    label: str | None = None
+    url: str | None = None
+    user: str | None = None
+
+
+class BulkProbeOut(BaseModel):
+    matches: list[BulkProbeMatch]
+
+
+@router.post("/bulk-probe", response_model=BulkProbeOut)
+async def bulk_probe(
+    payload: BulkProbeIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BulkProbeOut:
+    """Asks the agent to find the working URL for each IP using a list of
+    (user, password) candidates. The wizard uses this to skip per-camera
+    credential entry — paste 1 master password, get all N camera URLs back."""
+    device = await _get_owned_device(db, user.id, payload.device_id)
+    resp = await _agent_call(
+        str(device.id),
+        "bulk_probe",
+        {
+            "ips": [item.dict() for item in payload.ips],
+            "credentials": payload.credentials,
+        },
+        timeout=60.0,
+    )
+    if not resp.get("ok"):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, resp.get("error", "agent_error"))
+    raw = resp.get("result", {}).get("matches", [])
+    return BulkProbeOut(matches=[BulkProbeMatch(**m) for m in raw])
+
+
 class ProbeIn(BaseModel):
     device_id: UUID
     rtsp_url: str = Field(min_length=6, max_length=1024)

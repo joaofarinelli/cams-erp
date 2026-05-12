@@ -1,13 +1,13 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.models import Alert, AlertStatus, Camera, Device, Event, PresetType, Rule, User
+from app.db.models import Alert, AlertStatus, Camera, Device, Event, Rule, User
 from app.db.session import get_db
 from app.schemas.alerts import AlertOut
 from app.security.cognito import get_current_user
@@ -30,7 +30,6 @@ async def list_alerts(
     db: AsyncSession = Depends(get_db),
     since: datetime | None = Query(default=None),
     camera_id: UUID | None = Query(default=None),
-    preset_type: PresetType | None = Query(default=None),
     limit: int = Query(default=50, le=500),
 ) -> list[AlertOut]:
     stmt = (
@@ -47,8 +46,6 @@ async def list_alerts(
         stmt = stmt.where(Alert.created_at >= since)
     if camera_id is not None:
         stmt = stmt.where(Camera.id == camera_id)
-    if preset_type is not None:
-        stmt = stmt.where(Rule.preset_type == preset_type)
 
     rows = (await db.execute(stmt)).all()
     return [
@@ -58,7 +55,6 @@ async def list_alerts(
             rule_name=r.name,
             event_id=a.event_id,
             camera_id=r.camera_id,
-            preset_type=r.preset_type,
             status=a.status,
             score=a.score,
             message=a.message,
@@ -96,7 +92,7 @@ async def _maybe_auto_disable_rule_on_fp_storm(
         return
     rule.enabled = False
     await db.commit()
-    label = rule.name or rule.preset_type.value
+    label = rule.name or "Sem nome"
     body = (
         f"⚠️ Regra *{label}* desativada automaticamente.\n"
         f"{fp_count} dos últimos {len(recent)} alertas foram marcados falso-positivo. "
@@ -106,7 +102,6 @@ async def _maybe_auto_disable_rule_on_fp_storm(
         db,
         owner_id=owner_id,
         rule_name=label,
-        preset_type=rule.preset_type.value,
         score=0.0,
         message=body,
         alert_id="fp-storm",
@@ -145,7 +140,6 @@ async def feedback(
         rule_name=r.name,
         event_id=a.event_id,
         camera_id=r.camera_id,
-        preset_type=r.preset_type,
         status=a.status,
         score=a.score,
         message=a.message,
@@ -158,15 +152,17 @@ async def feedback(
 async def create_internal_alert(
     payload: InternalAlertCreate,
     db: AsyncSession = Depends(get_db),
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
 ) -> dict:
     """Inference-worker entrypoint. Persists the Alert and publishes to the
     in-process broker so connected mobile WS clients receive a push.
 
-    Gated by CAMS_AUTH_BYPASS so it can't be called from the public internet
-    in a dev tunnel. In production, replace with mTLS or an internal-only
-    network path."""
-    if not get_settings().auth_bypass:
-        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    Auth: dev uses CAMS_AUTH_BYPASS; prod requires X-Internal-Token matching
+    settings.internal_token (shared secret over Fly internal networking)."""
+    settings = get_settings()
+    if not settings.auth_bypass:
+        if not settings.internal_token or x_internal_token != settings.internal_token:
+            raise HTTPException(status.HTTP_404_NOT_FOUND)
 
     stmt = (
         select(Rule, Camera, Device)
@@ -197,7 +193,6 @@ async def create_internal_alert(
             "rule_id": str(rule.id),
             "rule_name": rule.name,
             "camera_id": str(camera.id),
-            "preset_type": rule.preset_type.value,
             "score": payload.score,
             "message": payload.message,
             "created_at": alert.created_at.isoformat(),
@@ -207,11 +202,30 @@ async def create_internal_alert(
         db,
         owner_id=device.owner_id,
         rule_name=rule.name,
-        preset_type=rule.preset_type.value,
         score=payload.score,
         message=payload.message,
         alert_id=str(alert.id),
     )
+    # Push a desktop toast to the agent that owns this camera so the PDV
+    # operator sees the alert immediately on the local machine, not just
+    # via WhatsApp/mobile.
+    try:
+        from app.services.agent_control import registry
+
+        agent_ws = registry._sockets.get(str(device.id))
+        if agent_ws is not None:
+            await agent_ws.send_json(
+                {
+                    "type": "alert_pushed",
+                    "alert_id": str(alert.id),
+                    "camera_id": str(camera.id),
+                    "rule_name": rule.name or "Alerta",
+                    "score": payload.score,
+                    "message": payload.message,
+                }
+            )
+    except Exception:  # noqa: BLE001
+        pass
     return {"id": str(alert.id)}
 
 

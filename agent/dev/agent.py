@@ -339,6 +339,36 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
             await ws.send(
                 json.dumps({"job_id": job_id, "ok": True, "result": {"local_devices": local}})
             )
+        elif type_ == "bulk_probe":
+            # Wizard sends a list of {ip, vendor} + a master credentials list;
+            # for each IP we try every known template until one returns a
+            # valid JPEG, then echo back the working URL so the cloud can
+            # create the camera in one shot.
+            from discovery import probe_credentials
+
+            ips: list[dict] = params.get("ips") or []
+            creds_raw: list[list[str]] = params.get("credentials") or []
+            creds = [(c[0], c[1]) for c in creds_raw if len(c) == 2]
+            results: list[dict] = []
+            for entry in ips:
+                ip = entry.get("ip")
+                vendor = entry.get("vendor")
+                name = entry.get("name") or ip
+                if not ip:
+                    continue
+                hit = await probe_credentials(ip, vendor, creds, timeout=4.0)
+                results.append(
+                    {
+                        "ip": ip,
+                        "name": name,
+                        "vendor": vendor,
+                        "ok": hit is not None,
+                        **(hit or {}),
+                    }
+                )
+            await ws.send(
+                json.dumps({"job_id": job_id, "ok": True, "result": {"matches": results}})
+            )
         elif type_ == "logs":
             # Return tail of agent.log. Used by the web panel to debug a
             # remote agent without asking the customer to copy/paste.
@@ -390,6 +420,15 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
 
 
 _LIVE_TASKS: dict[str, asyncio.Task] = {}
+
+# Set by tray.py at boot so the control loop can show toast notifications
+# when the API pushes an alert_pushed event.
+_NOTIFIER: Any | None = None
+
+
+def set_notifier(notifier: Any | None) -> None:
+    global _NOTIFIER
+    _NOTIFIER = notifier
 
 
 async def _live_snapshot_loop(ws, camera_id: str, source: str, fps: float = 1.0) -> None:
@@ -534,6 +573,15 @@ async def _control_loop(api_base: str, device_token: str) -> None:
                         )
                     elif t == "live_stop":
                         _stop_live(msg["camera_id"])
+                    elif t == "alert_pushed":
+                        try:
+                            global _NOTIFIER
+                            if _NOTIFIER is not None:
+                                rule = msg.get("rule_name") or "Alerta"
+                                body = msg.get("message") or ""
+                                _NOTIFIER.notify(f"🚨 {rule}", body[:200])
+                        except Exception as e:  # noqa: BLE001
+                            log(f"notify failed: {e!r}")
                     else:
                         asyncio.create_task(_handle_job(ws, msg))
         except Exception as e:  # noqa: BLE001
