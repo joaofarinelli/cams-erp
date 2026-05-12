@@ -71,4 +71,6 @@ async def test_export_and_delete_me(auth_client: AsyncClient) -> None:
     assert "password_hash" not in body["user"]
 
     r = await auth_client.delete("/me")
-    assert r.status_code == 204
+    assert r.status_code == 202
+    body = r.json()
+    assert "purge_at" in body
