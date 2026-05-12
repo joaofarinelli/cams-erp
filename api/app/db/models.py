@@ -3,7 +3,7 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import BigInteger, Date, DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -35,7 +35,43 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tier: Mapped[str] = mapped_column(
+        String(16), default="trial", server_default=sa.text("'trial'")
+    )
+    trial_ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    subscription_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UsageMonthly(Base):
+    __tablename__ = "usage_monthly"
+    owner_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    month: Mapped[datetime] = mapped_column(Date, primary_key=True)  # type: ignore[name-defined]
+    events_count: Mapped[int] = mapped_column(default=0, server_default=sa.text("0"))
+    vlm_calls: Mapped[int] = mapped_column(default=0, server_default=sa.text("0"))
+    vlm_cascade_calls: Mapped[int] = mapped_column(default=0, server_default=sa.text("0"))
+    vlm_tokens_in: Mapped[int] = mapped_column(BigInteger, default=0, server_default=sa.text("0"))
+    vlm_tokens_out: Mapped[int] = mapped_column(BigInteger, default=0, server_default=sa.text("0"))
+    alerts_count: Mapped[int] = mapped_column(default=0, server_default=sa.text("0"))
+    storage_gb_hours: Mapped[float] = mapped_column(default=0.0, server_default=sa.text("0"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class StripeEventProcessed(Base):
+    __tablename__ = "stripe_events_processed"
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    type: Mapped[str] = mapped_column(String(64))
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class Device(Base):

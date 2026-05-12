@@ -1,0 +1,18 @@
+# fly.toml app configuration file generated for cams-erp-inference on 2026-05-06T11:54:56-03:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'cams-erp-inference'
+primary_region = 'gru'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  CAMS_API = 'https://cams-erp-api.fly.dev'
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 2048

@@ -12,6 +12,9 @@ def enqueue_event(payload: dict) -> str:
 
         append_event(payload)
         return "dev-stub"
+    if not settings.events_queue_url:
+        # Production worker polls the events table directly. No queue needed.
+        return "db-poll"
     kwargs: dict = {"region_name": settings.aws_region}
     if settings.aws_endpoint_url:
         kwargs["endpoint_url"] = settings.aws_endpoint_url

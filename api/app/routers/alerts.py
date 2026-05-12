@@ -206,6 +206,13 @@ async def create_internal_alert(
         message=payload.message,
         alert_id=str(alert.id),
     )
+    # Bookkeeping for tier/billing.
+    try:
+        from app.services.usage import increment_usage
+
+        await increment_usage(db, device.owner_id, alerts_count=1)
+    except Exception:  # noqa: BLE001
+        pass
     # Push a desktop toast to the agent that owns this camera so the PDV
     # operator sees the alert immediately on the local machine, not just
     # via WhatsApp/mobile.

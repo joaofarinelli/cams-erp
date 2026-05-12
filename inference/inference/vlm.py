@@ -30,6 +30,12 @@ class AlertResult(BaseModel):
     evidence_frame_idx: int | None = Field(
         default=None, description="Index of the frame that most strongly motivated the decision."
     )
+    # Token counters propagated from the provider response so the cloud
+    # can charge accurately. Populated by `_run_vlm` from completion.usage
+    # when available; absent on parse errors.
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cascade_used: bool = False
 
 
 def sample_frames(clip_path: str, n: int = 4) -> list[np.ndarray]:
@@ -245,10 +251,18 @@ def _run_vlm(
         )
 
     raw = completion.choices[0].message.content or "{}"
+    tin = getattr(getattr(completion, "usage", None), "prompt_tokens", 0) or 0
+    tout = getattr(getattr(completion, "usage", None), "completion_tokens", 0) or 0
     try:
-        return _parse_result(raw)
+        result = _parse_result(raw)
+        result.tokens_in = int(tin)
+        result.tokens_out = int(tout)
+        return result
     except (json.JSONDecodeError, ValidationError) as e:
-        return AlertResult(alert=False, score=0.0, message=f"vlm parse error: {e}; raw={raw[:120]}")
+        r = AlertResult(alert=False, score=0.0, message=f"vlm parse error: {e}; raw={raw[:120]}")
+        r.tokens_in = int(tin)
+        r.tokens_out = int(tout)
+        return r
 
 
 def score_clip(
@@ -303,6 +317,10 @@ def score_clip(
         if bigger_frames:
             stage2 = _run_vlm(client, cascade_model, bigger_frames, zones, custom_prompt)
             stage2.message = f"[cascade] {stage2.message}"
+            stage2.cascade_used = True
+            # Carry stage 1 tokens too so caller can bill total VLM usage.
+            stage2.tokens_in += result.tokens_in
+            stage2.tokens_out += result.tokens_out
             return stage2
 
     return result

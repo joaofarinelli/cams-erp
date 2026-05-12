@@ -33,6 +33,13 @@ async def create_rule(
     )
     if result.scalar_one_or_none() is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Camera not found")
+    from app.services.quotas import tier_allows_intensity
+
+    if not tier_allows_intensity(user.tier, payload.analysis_intensity):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"intensity '{payload.analysis_intensity}' not allowed on tier '{user.tier}'",
+        )
     rule = Rule(
         camera_id=payload.camera_id,
         name=payload.name,
@@ -69,6 +76,14 @@ async def update_rule(
     db: AsyncSession = Depends(get_db),
 ) -> Rule:
     rule = await _owned_rule(rule_id, user, db)
+    if payload.analysis_intensity is not None:
+        from app.services.quotas import tier_allows_intensity
+
+        if not tier_allows_intensity(user.tier, payload.analysis_intensity):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"intensity '{payload.analysis_intensity}' not allowed on tier '{user.tier}'",
+            )
     for field in ("name", "enabled", "zones", "sensitivity", "cooldown_seconds", "custom_prompt", "schedule", "analysis_intensity"):
         v = getattr(payload, field)
         if v is not None:

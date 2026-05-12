@@ -1,67 +1,88 @@
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 from httpx import AsyncClient
 
 
-async def test_discover_empty(auth_client: AsyncClient, monkeypatch) -> None:
-    monkeypatch.setattr("app.services.discovery.ws_discover", AsyncMock(return_value=[]))
-    r = await auth_client.post("/onboarding/cameras/discover")
-    assert r.status_code == 200
-    assert r.json() == {"devices": []}
+async def test_discover_requires_device(auth_client: AsyncClient) -> None:
+    r = await auth_client.post("/onboarding/cameras/discover", json={})
+    assert r.status_code == 422
 
 
-async def test_discover_returns_device_with_templates(auth_client: AsyncClient, monkeypatch) -> None:
-    fake = [
-        {
-            "ip": "192.168.0.42",
-            "name": "Office cam",
-            "vendor": "intelbras",
-            "xaddrs": ["http://192.168.0.42:8000/onvif/device_service"],
-            "scopes": [],
-            "types": "",
-        }
-    ]
-    monkeypatch.setattr("app.routers.onboarding.ws_discover", AsyncMock(return_value=fake))
-    r = await auth_client.post("/onboarding/cameras/discover")
+async def test_discover_unknown_device_404(auth_client: AsyncClient) -> None:
+    r = await auth_client.post(
+        "/onboarding/cameras/discover", json={"device_id": str(uuid4())}
+    )
+    assert r.status_code == 404
+
+
+async def test_discover_proxies_to_agent(auth_client: AsyncClient, seed_device, monkeypatch) -> None:
+    fake_resp = {
+        "ok": True,
+        "result": {
+            "devices": [
+                {
+                    "ip": "192.168.0.42",
+                    "name": "Office cam",
+                    "vendor": "intelbras",
+                    "xaddrs": ["http://192.168.0.42:8000/onvif/device_service"],
+                    "url_templates": [
+                        {"label": "Main", "url": "rtsp://{user}:{password}@{ip}:554/cam/realmonitor?channel=1&subtype=0"}
+                    ],
+                }
+            ]
+        },
+    }
+    with patch(
+        "app.routers.onboarding.registry.call",
+        AsyncMock(return_value=fake_resp),
+    ):
+        r = await auth_client.post(
+            "/onboarding/cameras/discover", json={"device_id": str(seed_device.id)}
+        )
     assert r.status_code == 200
     devs = r.json()["devices"]
     assert len(devs) == 1
     assert devs[0]["ip"] == "192.168.0.42"
-    assert devs[0]["vendor"] == "intelbras"
-    assert any("realmonitor" in t["url"] for t in devs[0]["url_templates"])
 
 
-async def test_probe_returns_codec_and_preview(auth_client: AsyncClient, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.routers.onboarding.probe_stream",
-        AsyncMock(return_value={"ok": True, "codec": "h264", "width": 1280, "height": 720, "fps": 15.0}),
-    )
-    monkeypatch.setattr(
-        "app.routers.onboarding.first_frame_jpeg", AsyncMock(return_value=b"\xff\xd8\xff\xd9")
-    )
-    r = await auth_client.post(
-        "/onboarding/cameras/probe", json={"rtsp_url": "rtsp://x:y@1.2.3.4/main"}
-    )
+async def test_discover_agent_offline_409(auth_client: AsyncClient, seed_device) -> None:
+    from app.services.agent_control import AgentOfflineError
+
+    with patch(
+        "app.routers.onboarding.registry.call",
+        AsyncMock(side_effect=AgentOfflineError(str(seed_device.id))),
+    ):
+        r = await auth_client.post(
+            "/onboarding/cameras/discover", json={"device_id": str(seed_device.id)}
+        )
+    assert r.status_code == 409
+
+
+async def test_probe_proxies_to_agent(auth_client: AsyncClient, seed_device) -> None:
+    fake_resp = {
+        "ok": True,
+        "result": {
+            "ok": True,
+            "codec": "h264",
+            "width": 1280,
+            "height": 720,
+            "fps": 15.0,
+            "preview_data_url": "data:image/jpeg;base64,abc",
+        },
+    }
+    with patch(
+        "app.routers.onboarding.registry.call",
+        AsyncMock(return_value=fake_resp),
+    ):
+        r = await auth_client.post(
+            "/onboarding/cameras/probe",
+            json={"device_id": str(seed_device.id), "rtsp_url": "rtsp://x:y@1.2.3.4/main"},
+        )
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
     assert body["codec"] == "h264"
-    assert body["width"] == 1280
-    assert body["preview_data_url"].startswith("data:image/jpeg;base64,")
-
-
-async def test_probe_failure_returns_error(auth_client: AsyncClient, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.routers.onboarding.probe_stream",
-        AsyncMock(return_value={"ok": False, "error": "401 Unauthorized"}),
-    )
-    r = await auth_client.post(
-        "/onboarding/cameras/probe", json={"rtsp_url": "rtsp://bad@1.2.3.4/main"}
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["ok"] is False
-    assert "401" in body["error"]
 
 
 async def test_templates_returns_known_vendors(auth_client: AsyncClient) -> None:

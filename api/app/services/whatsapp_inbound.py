@@ -136,7 +136,7 @@ async def handle_evolution_webhook(payload: dict, db: AsyncSession) -> dict:
     alert.status = decision
     await db.commit()
 
-    label = rule.name or rule.preset_type.value
+    label = rule.name or "Sem nome"
     if decision == AlertStatus.seen:
         body = f"✅ Alerta confirmado: *{label}*. Obrigado!"
     else:

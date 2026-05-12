@@ -54,9 +54,9 @@ async def _send_expo(client: httpx.AsyncClient, token: str, title: str, body: st
         log.warning("expo push error: %r", e)
 
 
-def _build_message(rule_name: str | None, preset_type: str, score: float, message: str) -> tuple[str, str]:
+def _build_message(rule_name: str | None, score: float, message: str) -> tuple[str, str]:
     """Returns (short title, longer body) for both transports."""
-    label = rule_name or preset_type
+    label = rule_name or "Sem nome"
     title = f"🚨 {label}  (score {score:.2f})"
     body = message
     return title, body
@@ -67,7 +67,6 @@ async def fan_out_alert(
     *,
     owner_id,
     rule_name: str | None,
-    preset_type: str,
     score: float,
     message: str,
     alert_id: str,
@@ -85,7 +84,7 @@ async def fan_out_alert(
     if not subs:
         return
 
-    title, body = _build_message(rule_name, preset_type, score, message)
+    title, body = _build_message(rule_name, score, message)
     data = {"alert_id": alert_id}
 
     async with httpx.AsyncClient() as client:

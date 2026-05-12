@@ -87,7 +87,7 @@ function AlertRow({ alert }: { alert: Alert }) {
     <Link href={{ pathname: "/alert/[id]", params: { id: alert.id, s3_key: alert.s3_key } }} asChild>
       <View style={styles.row}>
         <View style={styles.rowHead}>
-          <Text style={styles.title}>{alert.rule_name || alert.preset_type}</Text>
+          <Text style={styles.title}>{alert.rule_name || "Sem nome"}</Text>
           <Text style={[styles.score, { color: scoreColor }]}>{alert.score.toFixed(2)}</Text>
         </View>
         <Text numberOfLines={2} style={styles.msg}>

@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { createCheckoutSession } from "../api";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
 
@@ -66,6 +68,21 @@ const TIERS: Tier[] = [
 
 
 export function PricingPage() {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const subscribe = async (tier: "starter" | "pro" | "business") => {
+    setBusy(tier);
+    setError(null);
+    try {
+      const url = await createCheckoutSession(tier);
+      window.location.href = url;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro");
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 py-4">
       <header className="space-y-2 text-center">
@@ -105,11 +122,14 @@ export function PricingPage() {
               <Button
                 className="w-full"
                 variant={t.highlight ? "default" : "outline"}
-                disabled
-                title="Checkout Stripe será habilitado em breve"
+                disabled={busy !== null}
+                onClick={() => subscribe(t.id)}
               >
-                Em breve
+                {busy === t.id ? "Redirecionando…" : "Assinar"}
               </Button>
+              {error && busy === null && (
+                <p className="text-xs text-destructive">{error}</p>
+              )}
               <ul className="space-y-2 text-sm">
                 {t.features.map((f, i) => (
                   <li key={i} className="flex gap-2">

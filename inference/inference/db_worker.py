@@ -148,11 +148,36 @@ def post_alert(api_base: str, token: str, payload: dict) -> dict:
     return r.json()
 
 
+def post_usage(api_base: str, token: str, payload: dict) -> None:
+    """Best-effort: don't crash the worker if billing endpoint is down."""
+    try:
+        r = httpx.post(
+            f"{api_base}/usage/_internal/increment",
+            json=payload,
+            headers={"X-Internal-Token": token},
+            timeout=5,
+        )
+        r.raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        log(f"  usage post failed: {e!r}")
+
+
+def _owner_for_camera(conn, camera_id: str) -> str | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT d.owner_id::text FROM cameras c JOIN devices d ON d.id = c.device_id WHERE c.id = %s",
+            (camera_id,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
 def process_event(event: dict, *, conn, s3, bucket: str, api_base: str, token: str, yolo_filter: bool) -> None:
     rules = fetch_rules(conn, event["camera_id"])
     if not rules:
         log(f"  no enabled rules for cam={event['camera_id']}")
         return
+    owner_id = _owner_for_camera(conn, event["camera_id"])
 
     try:
         clip_path = _download_clip(s3, bucket, event["s3_key"])
@@ -182,6 +207,18 @@ def process_event(event: dict, *, conn, s3, bucket: str, api_base: str, token: s
                 log(f"  vlm error: {e!r}")
                 continue
             log(f"    alert={result.alert} score={result.score:.2f} msg={result.message[:160]}")
+            if owner_id and (result.tokens_in or result.tokens_out):
+                post_usage(
+                    api_base,
+                    token,
+                    {
+                        "owner_id": owner_id,
+                        "vlm_calls": 1,
+                        "vlm_cascade_calls": 1 if result.cascade_used else 0,
+                        "vlm_tokens_in": int(result.tokens_in),
+                        "vlm_tokens_out": int(result.tokens_out),
+                    },
+                )
             if not result.alert:
                 continue
             try:

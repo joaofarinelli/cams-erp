@@ -236,6 +236,46 @@ export async function deleteFaceEnrollment(id: string): Promise<void> {
   if (!r.ok) throw new Error(`faces DELETE ${r.status}`);
 }
 
+export async function createCheckoutSession(tier: "starter" | "pro" | "business"): Promise<string> {
+  const r = await fetch(`${BASE}/billing/checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tier }),
+  });
+  if (!r.ok) throw new Error(`checkout ${r.status}: ${await r.text()}`);
+  return (await r.json()).url;
+}
+
+export async function getBillingPortal(): Promise<string> {
+  const r = await fetch(`${BASE}/billing/portal`, { method: "POST" });
+  if (!r.ok) throw new Error(`portal ${r.status}: ${await r.text()}`);
+  return (await r.json()).url;
+}
+
+export type UsageMe = {
+  month: string;
+  tier: string;
+  trial_ends_at: string | null;
+  events_count: number;
+  vlm_calls: number;
+  vlm_cascade_calls: number;
+  vlm_tokens_in: number;
+  vlm_tokens_out: number;
+  alerts_count: number;
+  storage_gb_hours: number;
+  events_limit: number | null;
+  cameras_limit: number | null;
+  events_percent: number;
+  intensities_allowed: string[];
+  cascade_allowed: boolean;
+};
+
+export async function fetchUsageMe(): Promise<UsageMe> {
+  const r = await fetch(`${BASE}/usage/me`);
+  if (!r.ok) throw new Error(`usage ${r.status}`);
+  return r.json();
+}
+
 export async function seekBack(
   alertId: string,
   secondsBefore: number = 30,

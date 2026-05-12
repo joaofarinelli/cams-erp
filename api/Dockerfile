@@ -9,6 +9,7 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PATH="/app/.venv/bin:$PATH"
 COPY --from=builder /app/.venv /app/.venv
 COPY app ./app
-# alembic.ini and migrations/ added in Task 1.2.
+COPY alembic.ini ./
+COPY migrations ./migrations
 EXPOSE 8080
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

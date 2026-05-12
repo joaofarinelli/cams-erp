@@ -6,23 +6,27 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import agent, alerts, auth, cameras, clips, digest as digest_router, events, faces, onboarding, pairing, privacy, rules, subscribers, webhooks
+from app.routers import agent, alerts, auth, billing, cameras, clips, digest as digest_router, events, faces, onboarding, pairing, privacy, rules, subscribers, usage as usage_router, webhooks
 from app.services.digest import digest_scheduler
+from app.services.trial_expiry import trial_expiry_scheduler
+from app.services.usage_aggregator import usage_storage_aggregator
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    task: asyncio.Task | None = None
+    tasks: list[asyncio.Task] = []
     if settings.digest_enabled:
-        task = asyncio.create_task(digest_scheduler(), name="digest_scheduler")
+        tasks.append(asyncio.create_task(digest_scheduler(), name="digest_scheduler"))
+    tasks.append(asyncio.create_task(usage_storage_aggregator(), name="usage_aggregator"))
+    tasks.append(asyncio.create_task(trial_expiry_scheduler(), name="trial_expiry"))
     try:
         yield
     finally:
-        if task is not None:
-            task.cancel()
+        for t in tasks:
+            t.cancel()
             try:
-                await task
+                await t
             except (asyncio.CancelledError, BaseException):
                 pass
 
@@ -59,6 +63,9 @@ def create_app() -> FastAPI:
     app.include_router(digest_router.router)
     app.include_router(onboarding.router)
     app.include_router(faces.router)
+    app.include_router(usage_router.router)
+    app.include_router(billing.router)
+    app.include_router(billing.webhooks_router)
     app.include_router(webhooks.router)
     app.include_router(auth.router)
     app.include_router(privacy.router)

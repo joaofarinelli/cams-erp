@@ -38,6 +38,16 @@ class Settings(BaseSettings):
     digest_enabled: bool = Field(default=True)
     retention_days_clips: int = Field(default=30, ge=1)
     retention_days_alerts: int = Field(default=90, ge=1)
+    cors_allowed_origins: str = Field(default="")
+    cors_allowed_origin_regex: str = Field(default="")
+    internal_token: str = Field(default="")
+    stripe_api_key: str = Field(default="")
+    stripe_webhook_secret: str = Field(default="")
+    stripe_price_starter: str = Field(default="")
+    stripe_price_pro: str = Field(default="")
+    stripe_price_business: str = Field(default="")
+    billing_success_url: str = Field(default="https://cams-erp-web.pages.dev/?tab=billing")
+    billing_cancel_url: str = Field(default="https://cams-erp-web.pages.dev/?tab=pricing")
 
 
 @lru_cache

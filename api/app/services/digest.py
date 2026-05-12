@@ -36,7 +36,7 @@ def _format_digest(owner_label: str, alerts_with_meta: list[dict]) -> tuple[str,
     # Group by rule for the WA body
     grouped: dict[str, list[dict]] = defaultdict(list)
     for a in alerts_with_meta:
-        key = a["rule_name"] or a["preset_type"]
+        key = a["rule_name"] or "Sem nome"
         grouped[key].append(a)
 
     pending = sum(1 for a in alerts_with_meta if a["status"] == AlertStatus.pending.value)
@@ -73,7 +73,6 @@ async def build_owner_digest(db: AsyncSession, owner_id) -> list[dict]:
         {
             "id": str(a.id),
             "rule_name": r.name,
-            "preset_type": r.preset_type.value,
             "camera_name": c.name,
             "status": a.status.value,
             "score": a.score,

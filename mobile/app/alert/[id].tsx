@@ -8,6 +8,7 @@ export default function AlertDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [alert, setAlert] = useState<Alert | null>(null);
+  const [videoUri, setVideoUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -15,6 +16,13 @@ export default function AlertDetailScreen() {
       .then((arr) => setAlert(arr.find((a) => a.id === id) ?? null))
       .catch(console.warn);
   }, [id]);
+
+  useEffect(() => {
+    if (!alert) return;
+    let cancelled = false;
+    clipUrl(alert.s3_key).then((u) => { if (!cancelled) setVideoUri(u); }).catch(console.warn);
+    return () => { cancelled = true; };
+  }, [alert?.s3_key]);
 
   async function feedback(isFalsePositive: boolean) {
     if (!alert) return;
@@ -39,14 +47,16 @@ export default function AlertDetailScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      <Video
-        source={{ uri: clipUrl(alert.s3_key) }}
-        style={styles.video}
-        useNativeControls
-        resizeMode={ResizeMode.CONTAIN}
-      />
+      {videoUri && (
+        <Video
+          source={{ uri: videoUri }}
+          style={styles.video}
+          useNativeControls
+          resizeMode={ResizeMode.CONTAIN}
+        />
+      )}
       <View style={styles.body}>
-        <Text style={styles.title}>{alert.rule_name || alert.preset_type}</Text>
+        <Text style={styles.title}>{alert.rule_name || "Sem nome"}</Text>
         <Text style={styles.meta}>
           score {alert.score.toFixed(2)} · {new Date(alert.created_at).toLocaleString("pt-BR")}
         </Text>

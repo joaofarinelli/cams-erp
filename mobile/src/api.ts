@@ -6,7 +6,6 @@ export type Alert = {
   rule_name: string | null;
   event_id: string;
   camera_id: string;
-  preset_type: string;
   status: "pending" | "seen" | "false_positive";
   score: number;
   message: string;
@@ -20,7 +19,6 @@ export type WSAlert = {
   rule_id: string;
   rule_name: string | null;
   camera_id: string;
-  preset_type: string;
   score: number;
   message: string;
   created_at: string;
@@ -73,8 +71,11 @@ export async function postFeedback(alertId: string, isFalsePositive: boolean): P
   return r.json();
 }
 
-export function clipUrl(s3_key: string): string {
-  return `${API_BASE}/dev/s3/${s3_key}`;
+export async function clipUrl(s3_key: string): Promise<string> {
+  const r = await fetch(`${API_BASE}/clips/signed-url?key=${encodeURIComponent(s3_key)}`);
+  if (!r.ok) throw new Error(`clip URL ${r.status}`);
+  const j = await r.json();
+  return j.url as string;
 }
 
 export function openAlertStream(onMessage: (alert: WSAlert) => void): () => void {

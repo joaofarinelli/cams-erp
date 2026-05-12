@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.db.models import AlertStatus, PresetType
+from app.db.models import AlertStatus
 
 
 class AlertOut(BaseModel):
@@ -12,7 +12,6 @@ class AlertOut(BaseModel):
     rule_name: str | None = None
     event_id: UUID
     camera_id: UUID
-    preset_type: PresetType
     status: AlertStatus
     score: float
     message: str
