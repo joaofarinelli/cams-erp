@@ -108,6 +108,16 @@ async def delete_my_account(
     fresh.deleted_at = now
     fresh.deletion_reason = payload.reason
     await db.commit()
+
+    # Fire purge_clips to all owner devices (best-effort, agent may be offline)
+    from app.services.agent_control import registry as _registry
+    devices = (await db.execute(select(Device).where(Device.owner_id == user.id))).scalars().all()
+    for device in devices:
+        try:
+            await _registry.send(str(device.id), {"type": "purge_clips"})
+        except Exception:  # noqa: BLE001
+            pass
+
     purge_at = now + timedelta(days=GRACE_PERIOD_DAYS)
     return {
         "deleted_at": now.isoformat(),

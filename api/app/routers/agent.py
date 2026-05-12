@@ -3,16 +3,18 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic import BaseModel, Field
 
-from app.db.models import AgentError, Camera, Device, Rule
+from app.db.models import AgentError, Camera, Device, Rule, User
 from app.db.session import SessionLocal, get_db
 from app.schemas.agent import AgentConfigOut, CameraConfigItem, HeartbeatIn, HeartbeatOut
+from app.security.cognito import get_current_user
 from app.security.device_auth import get_current_device, verify_device_token
 from app.services.agent_control import registry
 from app.services.kms import decrypt
@@ -137,6 +139,27 @@ class AgentErrorIn(BaseModel):
     traceback: str | None = Field(default=None, max_length=20000)
     agent_version: str | None = Field(default=None, max_length=32)
     context: dict | None = None
+
+
+@router.post("/{device_id}/purge", status_code=202)
+async def purge_device_clips(
+    device_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Send purge_clips command to agent. Owner-only."""
+    device = (await db.execute(
+        select(Device).where(Device.id == device_id, Device.owner_id == user.id)
+    )).scalar_one_or_none()
+    if device is None:
+        raise HTTPException(404, "Device not found")
+
+    try:
+        await registry.send(str(device_id), {"type": "purge_clips"})
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {"queued": True, "device_id": str(device_id)}
 
 
 @router.post("/errors", status_code=201)

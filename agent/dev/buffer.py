@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -32,6 +33,8 @@ from config_store import config_dir
 def buffer_root() -> Path:
     p = config_dir() / "buffer"
     p.mkdir(parents=True, exist_ok=True)
+    if sys.platform != "win32":
+        os.chmod(p, 0o700)
     return p
 
 
@@ -39,6 +42,8 @@ def _bucket_path(camera_id: str, ts: float) -> Path:
     h = int(ts // 3600)
     d = buffer_root() / camera_id
     d.mkdir(parents=True, exist_ok=True)
+    if sys.platform != "win32":
+        os.chmod(d, 0o700)
     return d / f"{h}.jsonl"
 
 
@@ -70,6 +75,8 @@ class RingBuffer:
         with self._lock:
             with path.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
+            if sys.platform != "win32":
+                os.chmod(path, 0o600)
             if time.time() - self._last_prune > 60:
                 self._prune()
                 self._last_prune = time.time()

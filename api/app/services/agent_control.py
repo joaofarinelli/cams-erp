@@ -112,6 +112,14 @@ class AgentControlRegistry:
         finally:
             self._pending.pop(job_id, None)
 
+    async def send(self, device_id: str, message: dict[str, Any]) -> None:
+        """Fire-and-forget: send a message to the agent without waiting for a reply.
+        Silently ignored if the agent is offline."""
+        ws = self._sockets.get(device_id)
+        if ws is None:
+            return
+        await ws.send_json(message)
+
     def resolve(self, job_id: str, result: dict[str, Any]) -> None:
         fut = self._pending.get(job_id)
         if fut and not fut.done():

@@ -763,6 +763,21 @@ async def _control_loop(api_base: str, device_token: str) -> None:
                                 _NOTIFIER.notify(f"🚨 {rule}", body[:200])
                         except Exception as e:  # noqa: BLE001
                             log(f"notify failed: {e!r}")
+                    elif t == "purge_clips":
+                        try:
+                            import shutil
+                            from buffer import buffer_root
+                            root = buffer_root()
+                            if root.exists():
+                                shutil.rmtree(root)
+                                root.mkdir(parents=True, exist_ok=True)
+                                import sys as _sys
+                                if _sys.platform != "win32":
+                                    import os as _os
+                                    _os.chmod(root, 0o700)
+                            log("Ring buffer purged via remote command")
+                        except Exception as exc:  # noqa: BLE001
+                            log(f"purge_clips failed: {exc!r}")
                     else:
                         asyncio.create_task(_handle_job(ws, msg))
         except Exception as e:  # noqa: BLE001
