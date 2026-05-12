@@ -5,7 +5,9 @@ import {
   LocalDevice,
   ProbeResult,
   Templates,
+  bulkProbeCameras,
   createCamera,
+  createCamerasBulk,
   createPairCode,
   discoverCameras,
   fetchAgentStatus,
@@ -44,6 +46,12 @@ export function CameraWizard({ onDone, onCancel }: { onDone: () => void; onCance
   const [pickedDevice, setPickedDevice] = useState<DiscoveredDevice | null>(null);
   const [manualIp, setManualIp] = useState("");
   const [manualVendor, setManualVendor] = useState<string>("intelbras");
+  const [selectedIps, setSelectedIps] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkUser, setBulkUser] = useState("admin");
+  const [bulkPwd, setBulkPwd] = useState("");
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkSummary, setBulkSummary] = useState<string | null>(null);
 
   const [templates, setTemplates] = useState<Templates>({});
   const [vendor, setVendor] = useState<string>("intelbras");
@@ -243,18 +251,127 @@ export function CameraWizard({ onDone, onCancel }: { onDone: () => void; onCance
 
             {discovered.length > 0 && (
               <div className="space-y-1.5">
-                {discovered.map((d) => (
-                  <Card key={d.ip} className="cursor-pointer p-3 transition-colors hover:bg-accent" onClick={() => pickDiscovered(d)}>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium">{d.name || d.ip}</p>
-                        <p className="text-xs text-muted-foreground">{d.vendor || "desconhecido"} · {d.ip}</p>
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={selectedIps.size === discovered.length}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedIps(new Set(discovered.map((x) => x.ip)));
+                        else setSelectedIps(new Set());
+                      }}
+                    />
+                    Selecionar todas ({selectedIps.size}/{discovered.length})
+                  </label>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={selectedIps.size === 0}
+                    onClick={() => setBulkOpen(true)}
+                  >
+                    Cadastrar todas ({selectedIps.size})
+                  </Button>
+                </div>
+                {discovered.map((d) => {
+                  const checked = selectedIps.has(d.ip);
+                  return (
+                    <Card key={d.ip} className="p-3 transition-colors hover:bg-accent">
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="flex flex-1 cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const next = new Set(selectedIps);
+                              if (e.target.checked) next.add(d.ip);
+                              else next.delete(d.ip);
+                              setSelectedIps(next);
+                            }}
+                          />
+                          <div>
+                            <p className="text-sm font-medium">{d.name || d.ip}</p>
+                            <p className="text-xs text-muted-foreground">{d.vendor || "desconhecido"} · {d.ip}</p>
+                          </div>
+                        </label>
+                        <Badge variant="outline" className="cursor-pointer" onClick={() => pickDiscovered(d)}>
+                          configurar uma
+                        </Badge>
                       </div>
-                      <Badge variant="outline">selecionar</Badge>
-                    </div>
-                  </Card>
-                ))}
+                    </Card>
+                  );
+                })}
               </div>
+            )}
+
+            {bulkOpen && (
+              <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Cadastrar {selectedIps.size} câmeras</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      Use uma senha mestre comum às câmeras. Vamos testar cada IP nos templates do fabricante.
+                    </p>
+                    <Input
+                      placeholder="Usuário"
+                      value={bulkUser}
+                      onChange={(e) => setBulkUser(e.target.value)}
+                    />
+                    <Input
+                      type="password"
+                      placeholder="Senha"
+                      value={bulkPwd}
+                      onChange={(e) => setBulkPwd(e.target.value)}
+                    />
+                    {bulkSummary && <p className="text-xs">{bulkSummary}</p>}
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" onClick={() => setBulkOpen(false)} disabled={bulkRunning}>
+                        Cancelar
+                      </Button>
+                      <Button
+                        disabled={bulkRunning || !bulkPwd}
+                        onClick={async () => {
+                          setBulkRunning(true);
+                          setBulkSummary("Procurando câmeras…");
+                          try {
+                            const ipsList = discovered.filter((d) => selectedIps.has(d.ip));
+                            const matches = await bulkProbeCameras(
+                              deviceId,
+                              ipsList.map((d) => ({ ip: d.ip, vendor: d.vendor, name: d.name })),
+                              [[bulkUser, bulkPwd]],
+                            );
+                            const ok = matches.filter((m) => m.ok && m.url);
+                            if (ok.length === 0) {
+                              setBulkSummary("Nenhuma câmera respondeu com essas credenciais.");
+                              return;
+                            }
+                            const created = await createCamerasBulk(
+                              deviceId,
+                              ok.map((m) => ({
+                                name: m.name || m.ip,
+                                rtsp_url: m.url as string,
+                              })),
+                            );
+                            setBulkSummary(`${created.length} câmeras cadastradas.`);
+                            setSelectedIps(new Set());
+                            setTimeout(() => {
+                              setBulkOpen(false);
+                              onDone();
+                            }, 800);
+                          } catch (e) {
+                            setBulkSummary(e instanceof Error ? e.message : "Erro");
+                          } finally {
+                            setBulkRunning(false);
+                          }
+                        }}
+                      >
+                        {bulkRunning ? "Processando…" : "Cadastrar"}
+                      </Button>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
             )}
 
             <Separator />

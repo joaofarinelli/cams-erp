@@ -347,6 +347,41 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
             await ws.send(
                 json.dumps({"job_id": job_id, "ok": True, "result": {"local_devices": local}})
             )
+        elif type_ == "face_extract":
+            # Extract face embeddings from a base64 JPEG. Used by the
+            # FaceEnrollment flow on the web panel: upload 3-5 fotos →
+            # API calls this job per photo → embedding list ends up in
+            # face_enrollments.embeddings for cosine-match later. When
+            # insightface isn't bundled, returns [] so the row is still
+            # stored — feature lights up automatically when the model
+            # ships in a later release.
+            import base64 as _b64
+            import numpy as _np
+            from face import FaceMatcher
+
+            jpeg_b64 = params.get("jpeg_b64") or ""
+            try:
+                jpeg = _b64.b64decode(jpeg_b64)
+            except Exception:  # noqa: BLE001
+                await ws.send(
+                    json.dumps({"job_id": job_id, "ok": False, "error": "bad_jpeg"})
+                )
+                return
+            arr = _np.frombuffer(jpeg, dtype=_np.uint8)
+            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            matcher = FaceMatcher.get()
+            embeddings: list = []
+            if matcher is not None and matcher.is_available() and frame is not None:
+                embeddings = matcher.extract_embeddings(frame)
+            await ws.send(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "ok": True,
+                        "result": {"embeddings": embeddings, "count": len(embeddings)},
+                    }
+                )
+            )
         elif type_ == "audio_push":
             # Two-way audio: the web operator records a short Opus blob,
             # we receive base64 audio and play it back through the

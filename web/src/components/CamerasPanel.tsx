@@ -6,6 +6,7 @@ import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Plus, Play, Camera as CameraIcon, Cpu } from "lucide-react";
+import { DeviceHealthPanel } from "./DeviceHealthPanel";
 import { cn } from "@/lib/utils";
 
 function DevicesStrip() {
@@ -50,6 +51,7 @@ export function CamerasPanel({ cameras, rules, onChange }: { cameras: Camera[]; 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <DevicesStrip />
+      <DeviceHealthPanel />
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{cameras.length} câmera{cameras.length === 1 ? "" : "s"}</p>
         <Button onClick={() => setShowWizard(true)}><Plus className="h-4 w-4" /> Adicionar câmera</Button>

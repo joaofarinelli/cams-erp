@@ -207,6 +207,53 @@ export async function postAlertFeedback(alertId: string, isFalsePositive: boolea
   return r.json();
 }
 
+export type FaceEnrollment = {
+  id: string;
+  name: string;
+  embedding_count: number;
+  photo_count: number;
+  created_at: string;
+};
+
+export async function enrollFace(name: string, photos: string[]): Promise<FaceEnrollment> {
+  const r = await fetch(`${BASE}/faces`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, photos }),
+  });
+  if (!r.ok) throw new Error(`faces POST ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+export async function listFaceEnrollments(): Promise<FaceEnrollment[]> {
+  const r = await fetch(`${BASE}/faces`);
+  if (!r.ok) throw new Error(`faces GET ${r.status}`);
+  return r.json();
+}
+
+export async function deleteFaceEnrollment(id: string): Promise<void> {
+  const r = await fetch(`${BASE}/faces/${id}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`faces DELETE ${r.status}`);
+}
+
+export async function seekBack(
+  alertId: string,
+  secondsBefore: number = 30,
+  secondsAfter: number = 5,
+): Promise<{ s3_key: string; frame_count: number }> {
+  const r = await fetch(`${BASE}/clips/seek-back`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      alert_id: alertId,
+      seconds_before: secondsBefore,
+      seconds_after: secondsAfter,
+    }),
+  });
+  if (!r.ok) throw new Error(`seek-back ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
 export type Device = {
   id: string;
   name: string;
@@ -217,6 +264,45 @@ export type Device = {
 export async function listDevices(): Promise<Device[]> {
   const r = await fetch(`${BASE}/devices`);
   if (!r.ok) throw new Error(`devices GET ${r.status}`);
+  return r.json();
+}
+
+export type DeviceDetail = Device & {
+  last_heartbeat_at: string | null;
+  last_self_test_json: {
+    checked_at?: number;
+    results?: Array<{
+      camera_id: string;
+      name: string;
+      ok: boolean;
+      latency_ms: number | null;
+      message: string;
+      kind: string;
+    }>;
+    tailscale?: { ip: string; hostname?: string; magic_dns?: string; online: boolean } | null;
+  } | null;
+};
+
+export async function fetchDevice(id: string): Promise<DeviceDetail> {
+  const r = await fetch(`${BASE}/devices/${id}`);
+  if (!r.ok) throw new Error(`device GET ${r.status}`);
+  return r.json();
+}
+
+export type AgentError = {
+  id: string;
+  device_id: string;
+  occurred_at: string;
+  kind: string;
+  message: string;
+  traceback: string | null;
+  agent_version: string | null;
+  context: unknown;
+};
+
+export async function fetchDeviceErrors(id: string, limit: number = 50): Promise<AgentError[]> {
+  const r = await fetch(`${BASE}/devices/${id}/errors?limit=${limit}`);
+  if (!r.ok) throw new Error(`device errors ${r.status}`);
   return r.json();
 }
 

@@ -15,11 +15,38 @@ import {
 import { AlertCard } from "./components/AlertCard";
 import { AlertsFilters, ClientFilters, filterAlertsClient } from "./components/AlertsFilters";
 import { AuthScreen } from "./components/AuthScreen";
+import { BillingPage } from "./components/BillingPage";
 import { CamerasPanel } from "./components/CamerasPanel";
+import { FacesPanel } from "./components/FacesPanel";
+import { PricingPage } from "./components/PricingPage";
 import { RulesPanel } from "./components/RulesPanel";
 import { SubscribersPanel } from "./components/SubscribersPanel";
+import { ThemeProvider } from "./components/ui/theme-provider";
+import { ThemeToggle } from "./components/ThemeToggle";
+import { Badge } from "./components/ui/badge";
+import { Separator } from "./components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./components/ui/dropdown-menu";
+import { Bell, Camera as CameraIcon, ChevronDown, CreditCard, ListChecks, LogOut, Receipt, Send, ShieldAlert, UserCircle2 } from "lucide-react";
+import { cn } from "./lib/utils";
 
-type Tab = "alerts" | "cameras" | "rules" | "subscribers";
+type Tab = "alerts" | "cameras" | "rules" | "subscribers" | "faces" | "pricing" | "billing";
+
+const NAV: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "alerts", label: "Alertas", icon: Bell },
+  { id: "cameras", label: "Câmeras", icon: CameraIcon },
+  { id: "rules", label: "Regras", icon: ListChecks },
+  { id: "subscribers", label: "Notificações", icon: Send },
+  { id: "faces", label: "Faces conhecidas", icon: UserCircle2 },
+  { id: "pricing", label: "Planos", icon: CreditCard },
+  { id: "billing", label: "Cobrança", icon: Receipt },
+];
 
 export function App() {
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined);
@@ -28,13 +55,17 @@ export function App() {
     fetchMe().then((u) => setUser(u)).catch(() => setUser(null));
   }, []);
 
-  if (user === undefined) {
-    return <div className="auth-wrap"><p>Carregando…</p></div>;
-  }
-  if (user === null) {
-    return <AuthScreen onAuthed={setUser} />;
-  }
-  return <Authenticated user={user} onLogout={() => { setToken(null); setUser(null); }} />;
+  return (
+    <ThemeProvider defaultTheme="system">
+      {user === undefined ? (
+        <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">Carregando…</div>
+      ) : user === null ? (
+        <AuthScreen onAuthed={setUser} />
+      ) : (
+        <Authenticated user={user} onLogout={() => { setToken(null); setUser(null); }} />
+      )}
+    </ThemeProvider>
+  );
 }
 
 function Authenticated({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
@@ -47,22 +78,13 @@ function Authenticated({ user, onLogout }: { user: AuthUser; onLogout: () => voi
   const [clientFilters, setClientFilters] = useState<ClientFilters>({ status: "all", search: "" });
 
   async function refreshAlerts(filters: AlertFilters = serverFilters) {
-    try {
-      setAlerts(await listAlerts(filters));
-    } catch (e) {
-      console.error("listAlerts failed", e);
-    }
+    try { setAlerts(await listAlerts(filters)); } catch (e) { console.error(e); }
   }
-
   async function refreshAll(filters: AlertFilters = serverFilters) {
     try {
       const [a, c, r] = await Promise.all([listAlerts(filters), listCameras(), listRules()]);
-      setAlerts(a);
-      setCameras(c);
-      setRules(r);
-    } catch (e) {
-      console.error("refresh failed", e);
-    }
+      setAlerts(a); setCameras(c); setRules(r);
+    } catch (e) { console.error(e); }
   }
 
   useEffect(() => {
@@ -70,13 +92,12 @@ function Authenticated({ user, onLogout }: { user: AuthUser; onLogout: () => voi
     const close = openAlertStream((wsAlert) => {
       setWsConnected(true);
       refreshAlerts();
-      flashTitle(wsAlert.rule_name || wsAlert.preset_type);
+      flashTitle(wsAlert.rule_name || "Sem nome");
     });
     return close;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-fetch when server filters change
   useEffect(() => {
     refreshAlerts(serverFilters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,65 +106,121 @@ function Authenticated({ user, onLogout }: { user: AuthUser; onLogout: () => voi
   function flashTitle(rule: string) {
     const orig = document.title;
     document.title = `🔔 ${rule}`;
-    setTimeout(() => {
-      document.title = orig;
-    }, 4000);
+    setTimeout(() => { document.title = orig; }, 4000);
   }
 
   const visible = filterAlertsClient(alerts, clientFilters);
+  const pending = visible.filter((a) => a.status === "pending").length;
+
+  const pageTitle = NAV.find((n) => n.id === tab)?.label ?? "";
 
   return (
-    <div className="app">
-      <header>
-        <h1>cams-erp</h1>
-        <nav style={{ flex: 1 }}>
-          <button className={tab === "alerts" ? "active" : ""} onClick={() => setTab("alerts")}>
-            Alertas {visible.length > 0 && <span className="badge">{visible.length}</span>}
-          </button>
-          <button className={tab === "cameras" ? "active" : ""} onClick={() => setTab("cameras")}>
-            Câmeras
-          </button>
-          <button className={tab === "rules" ? "active" : ""} onClick={() => setTab("rules")}>
-            Regras
-          </button>
-          <button className={tab === "subscribers" ? "active" : ""} onClick={() => setTab("subscribers")}>
-            Notificações
-          </button>
+    <div className="flex h-screen w-full overflow-hidden bg-background">
+      {/* Sidebar */}
+      <aside className="flex w-60 flex-col border-r bg-card">
+        <div className="flex h-14 items-center gap-2 px-4">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
+            <ShieldAlert className="h-4 w-4" />
+          </div>
+          <span className="text-sm font-semibold tracking-tight">cams-erp</span>
+        </div>
+        <Separator />
+        <nav className="flex-1 space-y-1 p-2">
+          {NAV.map((item) => {
+            const Icon = item.icon;
+            const active = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setTab(item.id)}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors",
+                  active ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                )}
+              >
+                <span className="flex items-center gap-2"><Icon className="h-4 w-4" /> {item.label}</span>
+                {item.id === "alerts" && pending > 0 && <Badge variant="default" className="h-5 px-1.5">{pending}</Badge>}
+              </button>
+            );
+          })}
         </nav>
-        <span
-          className={`ws-dot ${wsConnected ? "ok" : "off"}`}
-          title={wsConnected ? "WS conectado" : "aguardando"}
-        />
-        <span className="user-chip" title={user.email}>
-          {user.name || user.email}
-          <button onClick={onLogout} className="link-btn" style={{ marginLeft: 8 }}>
-            sair
-          </button>
-        </span>
-      </header>
+        <Separator />
+        <div className="p-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm hover:bg-secondary/60">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium uppercase">
+                    {(user.name || user.email).slice(0, 1)}
+                  </span>
+                  <span className="min-w-0 truncate">{user.name || user.email}</span>
+                </span>
+                <ChevronDown className="h-4 w-4 opacity-50" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuLabel className="truncate">{user.email}</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onLogout}><LogOut className="h-4 w-4" /> Sair</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </aside>
 
-      <main>
-        {tab === "alerts" && (
-          <>
-            <AlertsFilters
-              serverFilters={serverFilters}
-              clientFilters={clientFilters}
-              cameras={cameras}
-              onServerChange={setServerFilters}
-              onClientChange={setClientFilters}
-            />
-            <section className="alerts">
-              {visible.length === 0 && <p className="empty">Nenhum alerta para os filtros atuais.</p>}
-              {visible.map((a) => (
-                <AlertCard key={a.id} alert={a} onUpdate={() => refreshAlerts()} />
-              ))}
-            </section>
-          </>
-        )}
-        {tab === "cameras" && <CamerasPanel cameras={cameras} rules={rules} onChange={() => refreshAll()} />}
-        {tab === "rules" && <RulesPanel cameras={cameras} rules={rules} onChange={() => refreshAll()} />}
-        {tab === "subscribers" && <SubscribersPanel />}
-      </main>
+      {/* Main */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-14 items-center justify-between border-b bg-background/80 px-6 backdrop-blur">
+          <div className="flex items-center gap-3">
+            <h1 className="text-base font-semibold tracking-tight">{pageTitle}</h1>
+            {tab === "alerts" && (
+              <Badge variant={wsConnected ? "success" : "secondary"} className="gap-1">
+                <span className={cn("h-1.5 w-1.5 rounded-full", wsConnected ? "bg-emerald-500" : "bg-muted-foreground")} />
+                {wsConnected ? "ao vivo" : "aguardando"}
+              </Badge>
+            )}
+          </div>
+          <ThemeToggle />
+        </header>
+
+        <main className="min-h-0 flex-1 overflow-y-auto p-6">
+          {tab === "alerts" && (
+            <div className="mx-auto max-w-5xl space-y-4">
+              <AlertsFilters
+                serverFilters={serverFilters}
+                clientFilters={clientFilters}
+                cameras={cameras}
+                onServerChange={setServerFilters}
+                onClientChange={setClientFilters}
+              />
+              {visible.length === 0 ? (
+                <EmptyState icon={Bell} title="Nenhum alerta" hint="Os alertas vão aparecer aqui em tempo real." />
+              ) : (
+                <div className="grid gap-4">
+                  {visible.map((a) => <AlertCard key={a.id} alert={a} onUpdate={() => refreshAlerts()} />)}
+                </div>
+              )}
+            </div>
+          )}
+          {tab === "cameras" && <CamerasPanel cameras={cameras} rules={rules} onChange={() => refreshAll()} />}
+          {tab === "rules" && <RulesPanel cameras={cameras} rules={rules} onChange={() => refreshAll()} />}
+          {tab === "subscribers" && <SubscribersPanel />}
+          {tab === "faces" && <FacesPanel />}
+          {tab === "pricing" && <PricingPage />}
+          {tab === "billing" && <BillingPage />}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ icon: Icon, title, hint }: { icon: React.ComponentType<{ className?: string }>; title: string; hint?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-card/50 p-12 text-center">
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
+        <Icon className="h-5 w-5 text-muted-foreground" />
+      </div>
+      <p className="text-sm font-medium">{title}</p>
+      {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

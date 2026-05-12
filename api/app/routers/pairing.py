@@ -46,6 +46,15 @@ class AgentErrorOut(BaseModel):
     context: dict | None
 
 
+class DeviceDetail(BaseModel):
+    id: UUID
+    name: str
+    paired: bool
+    edge_yolo_enabled: bool
+    last_heartbeat_at: datetime | None
+    last_self_test_json: dict | None
+
+
 devices_router = APIRouter(prefix="/devices", tags=["devices"])
 
 
@@ -121,6 +130,28 @@ async def fetch_device_logs(
         path=res.get("path", ""),
         content=res.get("content", ""),
         lines=int(res.get("lines") or 0),
+    )
+
+
+@devices_router.get("/{device_id}", response_model=DeviceDetail)
+async def get_device(
+    device_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DeviceDetail:
+    result = await db.execute(
+        select(Device).where(Device.id == device_id, Device.owner_id == user.id)
+    )
+    device = result.scalar_one_or_none()
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device not found")
+    return DeviceDetail(
+        id=device.id,
+        name=device.name,
+        paired=device.device_token_hash is not None,
+        edge_yolo_enabled=device.edge_yolo_enabled,
+        last_heartbeat_at=device.last_heartbeat_at,
+        last_self_test_json=device.last_self_test_json,
     )
 
 

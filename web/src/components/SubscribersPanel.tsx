@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
 import { Subscriber, createSubscriber, deleteSubscriber, listSubscribers, runDigestNow } from "../api";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Badge } from "./ui/badge";
+import { MessageCircle, Send, Smartphone, Trash2 } from "lucide-react";
 
 export function SubscribersPanel() {
   const [subs, setSubs] = useState<Subscriber[]>([]);
@@ -8,98 +14,83 @@ export function SubscribersPanel() {
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
-    try {
-      setSubs(await listSubscribers());
-    } catch (e) {
-      setError(String(e));
-    }
+    try { setSubs(await listSubscribers()); } catch (e) { setError(String(e)); }
   }
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
-    if (phone.trim().length < 10) {
-      setError("Telefone inválido. Use formato com DDI: 5511999991234");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await createSubscriber("whatsapp", phone.trim());
-      setPhone("");
-      load();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+    if (phone.trim().length < 10) { setError("Telefone inválido. Use formato com DDI: 5511999991234"); return; }
+    setBusy(true); setError(null);
+    try { await createSubscriber("whatsapp", phone.trim()); setPhone(""); load(); }
+    catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
   }
 
-  async function remove(id: string) {
-    await deleteSubscriber(id);
-    load();
+  async function remove(id: string) { await deleteSubscriber(id); load(); }
+
+  async function digest() {
+    try {
+      const r = await runDigestNow();
+      alert(r.sent ? "Resumo enviado." : "Sem inscritos.");
+    } catch (e) { alert(String(e)); }
   }
 
   return (
-    <section className="rules">
-      <form className="rule-form" onSubmit={add}>
-        <h2>Inscrever WhatsApp</h2>
-        <p className="muted">
-          Alertas serão enviados via Evolution API local (não usa Meta API). É preciso parear um
-          número WhatsApp na instância antes (ver <code>docker-compose.dev.yml</code>).
-        </p>
-        <label>
-          Número (DDI + DDD + número, só dígitos)
-          <input
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="5511999991234"
-          />
-        </label>
-        {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={busy}>
-          {busy ? "Salvando…" : "Adicionar"}
-        </button>
-      </form>
+    <div className="mx-auto max-w-2xl space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><MessageCircle className="h-4 w-4" /> WhatsApp</CardTitle>
+          <CardDescription>Alertas via Evolution API local. Pareie um número WhatsApp na instância antes.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={add} className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="phone">Número (DDI + DDD + número, só dígitos)</Label>
+              <Input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="5511999991234" />
+            </div>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <Button type="submit" disabled={busy}>{busy ? "Salvando…" : "Adicionar"}</Button>
+          </form>
+        </CardContent>
+      </Card>
 
-      <h2>Resumo diário</h2>
-      <p className="muted">
-        Enviado automaticamente todo dia às 08h00 (America/Sao_Paulo). Inclui top alertas das
-        últimas 24h agrupados por regra.
-      </p>
-      <button
-        type="button"
-        onClick={async () => {
-          try {
-            const r = await runDigestNow();
-            alert(r.sent ? "Resumo enviado." : "Sem inscritos.");
-          } catch (e) {
-            alert(String(e));
-          }
-        }}
-        style={{ background: "#06a", color: "#fff", border: 0, padding: "0.5rem 1rem", borderRadius: 4, cursor: "pointer", marginBottom: "1rem" }}
-      >
-        Enviar resumo agora
-      </button>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Send className="h-4 w-4" /> Resumo diário</CardTitle>
+          <CardDescription>Enviado automaticamente todo dia às 08:00 (America/Sao_Paulo).</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" onClick={digest}><Send className="h-4 w-4" /> Enviar agora</Button>
+        </CardContent>
+      </Card>
 
-      <h2>Inscritos ({subs.length})</h2>
-      <ul className="rule-list">
-        {subs.map((s) => (
-          <li key={s.id}>
-            <span style={{ marginRight: 8 }}>{s.kind === "whatsapp" ? "📱 WA" : "📲 Push"}</span>
-            <code>{s.target}</code>
-            <button
-              style={{ float: "right", border: 0, background: "transparent", color: "#d33", cursor: "pointer" }}
-              onClick={() => remove(s.id)}
-            >
-              remover
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
+      <Card>
+        <CardHeader>
+          <CardTitle>Inscritos ({subs.length})</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {subs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhum inscrito ainda.</p>
+          ) : (
+            subs.map((s) => (
+              <div key={s.id} className="flex items-center justify-between rounded-md border bg-card p-2">
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="gap-1">
+                    {s.kind === "whatsapp" ? <MessageCircle className="h-3 w-3" /> : <Smartphone className="h-3 w-3" />}
+                    {s.kind}
+                  </Badge>
+                  <code className="text-sm">{s.target}</code>
+                </div>
+                <Button variant="ghost" size="icon" onClick={() => remove(s.id)}>
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
