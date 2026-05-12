@@ -62,13 +62,14 @@ async def test_signup_login_me_flow(anon_client: AsyncClient, monkeypatch) -> No
 
 
 async def test_export_and_delete_me(auth_client: AsyncClient) -> None:
-    r = await auth_client.get("/me/export")
-    assert r.status_code == 200
+    from unittest.mock import AsyncMock, patch
+
+    with patch("app.routers.privacy.process_export_request", new_callable=AsyncMock):
+        r = await auth_client.get("/me/export")
+    assert r.status_code == 202
     body = r.json()
-    assert "user" in body
-    assert "cameras" in body
-    assert body["user"]["email"]
-    assert "password_hash" not in body["user"]
+    assert "export_id" in body
+    assert body["status"] == "processing"
 
     r = await auth_client.delete("/me")
     assert r.status_code == 202

@@ -50,6 +50,10 @@ python_version = "3.12"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+  "ignore::RuntimeWarning:asyncpg",
+  "ignore::ResourceWarning",
+]
 
 [dependency-groups]
 dev = [

@@ -116,8 +116,11 @@ async def test_accept_terms_endpoint(db_session: AsyncSession, seed_user: User) 
 # ---------------------------------------------------------------------------
 
 async def test_export_contains_consent_log(auth_client: AsyncClient) -> None:
-    r = await auth_client.get("/me/export")
-    assert r.status_code == 200
+    from unittest.mock import AsyncMock, patch
+
+    with patch("app.routers.privacy.process_export_request", new_callable=AsyncMock):
+        r = await auth_client.get("/me/export")
+    assert r.status_code == 202
     body = r.json()
-    assert "consent_log" in body
-    assert isinstance(body["consent_log"], list)
+    assert body["status"] == "processing"
+    assert "export_id" in body

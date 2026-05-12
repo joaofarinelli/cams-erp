@@ -6,80 +6,62 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Alert, AuditLog, Camera, ConsentLog, Device, Rule, Subscriber, User
+from app.db.models import Alert, AuditLog, Camera, ConsentLog, DataExportRequest, Device, Rule, Subscriber, User
 from app.db.session import get_db
 from app.security.cognito import get_current_user
 from app.security.jwt_self import verify_token as verify_self_token
+from app.services.data_export import process_export_request
 
 router = APIRouter(prefix="/me", tags=["me"])
 
 GRACE_PERIOD_DAYS = 30
 
 
-@router.get("/export")
-async def export_my_data(
+@router.get("/export", status_code=202)
+async def request_data_export(
+    request: Request,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Returns every row this user owns. JSON; client renders/downloads."""
-    devices = (
-        await db.execute(select(Device).where(Device.owner_id == user.id))
-    ).scalars().all()
-    device_ids = [d.id for d in devices]
-    cameras = (
-        await db.execute(select(Camera).where(Camera.device_id.in_(device_ids))) if device_ids else None
-    )
-    cams = list(cameras.scalars().all()) if cameras is not None else []
-    cam_ids = [c.id for c in cams]
-    rules = (
-        await db.execute(select(Rule).where(Rule.camera_id.in_(cam_ids))) if cam_ids else None
-    )
-    rs = list(rules.scalars().all()) if rules is not None else []
-    rule_ids = [r.id for r in rs]
-    alerts = (
-        await db.execute(select(Alert).where(Alert.rule_id.in_(rule_ids))) if rule_ids else None
-    )
-    al = list(alerts.scalars().all()) if alerts is not None else []
-    subs = (
-        await db.execute(select(Subscriber).where(Subscriber.owner_id == user.id))
-    ).scalars().all()
-    audit_logs = (
+    """Rate-limited async export. Queues ZIP build; client polls or waits for email."""
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    recent = (
         await db.execute(
-            select(AuditLog)
-            .where(AuditLog.user_id == user.id)
-            .order_by(AuditLog.created_at.desc())
-            .limit(500)
+            select(DataExportRequest)
+            .where(
+                and_(
+                    DataExportRequest.user_id == user.id,
+                    DataExportRequest.requested_at >= one_hour_ago,
+                )
+            )
+            .order_by(DataExportRequest.requested_at.desc())
+            .limit(1)
         )
-    ).scalars().all()
-    consents = (
-        await db.execute(
-            select(ConsentLog)
-            .where(ConsentLog.user_id == user.id)
-            .order_by(ConsentLog.accepted_at.desc())
+    ).scalar_one_or_none()
+    if recent is not None:
+        retry_after = recent.requested_at + timedelta(hours=1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Export já solicitado. Tente novamente após {retry_after.isoformat()}",
         )
-    ).scalars().all()
 
-    def _flat(obj):
-        return {
-            k: (str(v) if hasattr(v, "hex") else v.isoformat() if hasattr(v, "isoformat") else v)
-            for k, v in obj.__dict__.items()
-            if not k.startswith("_") and k != "password_hash"
-        }
+    req = DataExportRequest(user_id=user.id)
+    db.add(req)
+    await db.commit()
+    await db.refresh(req)
+
+    background_tasks.add_task(process_export_request, req.id)
 
     return {
-        "user": _flat(user),
-        "devices": [_flat(d) for d in devices],
-        "cameras": [_flat(c) for c in cams],
-        "rules": [_flat(r) for r in rs],
-        "alerts": [_flat(a) for a in al],
-        "subscribers": [_flat(s) for s in subs],
-        "audit_log": [_flat(a) for a in audit_logs],
-        "consent_log": [_flat(c) for c in consents],
+        "export_id": str(req.id),
+        "status": "processing",
+        "message": "Você receberá um link por email em instantes.",
     }
 
 
