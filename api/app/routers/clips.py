@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from app.db.session import get_db
 from app.schemas.clips import ClipUploadRequest, ClipUploadResponse
 from app.security.cognito import get_current_user
 from app.security.device_auth import get_current_device
+from app.services import audit
 from app.services.agent_control import AgentOfflineError, registry
 from app.services.s3 import signed_get_url, signed_put_url
 
@@ -40,6 +41,7 @@ async def get_upload_url(
 
 @router.get("/signed-url")
 async def get_signed_clip_url(
+    request: Request,
     key: str = Query(..., min_length=1, max_length=512),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -58,6 +60,16 @@ async def get_signed_clip_url(
     owner = (await db.execute(stmt)).scalar_one_or_none()
     if owner != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
+    await audit.record(
+        db,
+        user_id=user.id,
+        action="clip.view",
+        target_type="clip",
+        target_id=key,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    await db.commit()
     return {"url": signed_get_url(key), "expires_in_seconds": 600}
 
 

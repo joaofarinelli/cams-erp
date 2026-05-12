@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Alert, Camera, Device, Rule, Subscriber, User
+from app.db.models import Alert, AuditLog, Camera, Device, Rule, Subscriber, User
 from app.db.session import get_db
 from app.security.cognito import get_current_user
 
@@ -42,6 +42,14 @@ async def export_my_data(
     subs = (
         await db.execute(select(Subscriber).where(Subscriber.owner_id == user.id))
     ).scalars().all()
+    audit_logs = (
+        await db.execute(
+            select(AuditLog)
+            .where(AuditLog.user_id == user.id)
+            .order_by(AuditLog.created_at.desc())
+            .limit(500)
+        )
+    ).scalars().all()
 
     def _flat(obj):
         return {
@@ -57,6 +65,7 @@ async def export_my_data(
         "rules": [_flat(r) for r in rs],
         "alerts": [_flat(a) for a in al],
         "subscribers": [_flat(s) for s in subs],
+        "audit_log": [_flat(a) for a in audit_logs],
     }
 
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from app.db.models import Alert, AlertStatus, Camera, Device, Event, Rule, User
 from app.db.session import get_db
 from app.schemas.alerts import AlertOut
 from app.security.cognito import get_current_user
+from app.services import audit
 from app.services.notifications import fan_out_alert
 from app.services.pubsub import broker
 
@@ -65,6 +66,49 @@ async def list_alerts(
     ]
 
 
+@router.get("/{alert_id}", response_model=AlertOut)
+async def get_alert(
+    alert_id: UUID,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AlertOut:
+    stmt = (
+        select(Alert, Rule, Event)
+        .join(Rule, Alert.rule_id == Rule.id)
+        .join(Event, Alert.event_id == Event.id)
+        .join(Camera, Rule.camera_id == Camera.id)
+        .join(Device, Camera.device_id == Device.id)
+        .where(Alert.id == alert_id, Device.owner_id == user.id)
+    )
+    row = (await db.execute(stmt)).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Alert not found")
+    a, r, e = row
+    await audit.record(
+        db,
+        user_id=user.id,
+        action="alert.view",
+        target_type="alert",
+        target_id=str(alert_id),
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    await db.commit()
+    return AlertOut(
+        id=a.id,
+        rule_id=a.rule_id,
+        rule_name=r.name,
+        event_id=a.event_id,
+        camera_id=r.camera_id,
+        status=a.status,
+        score=a.score,
+        message=a.message,
+        s3_key=e.s3_key,
+        created_at=a.created_at,
+    )
+
+
 FP_STORM_WINDOW = 10
 FP_STORM_THRESHOLD = 7
 
@@ -112,6 +156,7 @@ async def _maybe_auto_disable_rule_on_fp_storm(
 async def feedback(
     alert_id: UUID,
     is_false_positive: bool,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AlertOut:
@@ -128,6 +173,15 @@ async def feedback(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Alert not found")
     a, r, e = row
     a.status = AlertStatus.false_positive if is_false_positive else AlertStatus.seen
+    await audit.record(
+        db,
+        user_id=user.id,
+        action="alert.feedback",
+        target_type="alert",
+        target_id=str(alert_id),
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     await db.commit()
     await db.refresh(a)
 
