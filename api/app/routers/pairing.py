@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Device, User
+from app.db.models import AgentError, Device, User
 from app.db.session import get_db
 from app.schemas.pairing import PairCodeOut, PairVerifyIn, PairVerifyOut
 from app.security.cognito import get_current_user
@@ -33,6 +33,17 @@ class DeviceLogs(BaseModel):
     path: str
     content: str
     lines: int
+
+
+class AgentErrorOut(BaseModel):
+    id: UUID
+    device_id: UUID
+    occurred_at: datetime
+    kind: str
+    message: str
+    traceback: str | None
+    agent_version: str | None
+    context: dict | None
 
 
 devices_router = APIRouter(prefix="/devices", tags=["devices"])
@@ -111,6 +122,42 @@ async def fetch_device_logs(
         content=res.get("content", ""),
         lines=int(res.get("lines") or 0),
     )
+
+
+@devices_router.get("/{device_id}/errors", response_model=list[AgentErrorOut])
+async def list_device_errors(
+    device_id: UUID,
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[AgentErrorOut]:
+    """Recent crash/error reports submitted by the agent. Newest first."""
+    result = await db.execute(
+        select(Device).where(Device.id == device_id, Device.owner_id == user.id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device not found")
+    rows = (
+        await db.execute(
+            select(AgentError)
+            .where(AgentError.device_id == device_id)
+            .order_by(AgentError.occurred_at.desc())
+            .limit(max(1, min(limit, 500)))
+        )
+    ).scalars().all()
+    return [
+        AgentErrorOut(
+            id=e.id,
+            device_id=e.device_id,
+            occurred_at=e.occurred_at,
+            kind=e.kind,
+            message=e.message,
+            traceback=e.traceback,
+            agent_version=e.agent_version,
+            context=e.context,
+        )
+        for e in rows
+    ]
 
 
 @router.post("/code", response_model=PairCodeOut, status_code=201)

@@ -61,7 +61,29 @@ class Device(Base):
     edge_yolo_enabled: Mapped[bool] = mapped_column(
         default=False, server_default=sa.false()
     )
+    last_self_test_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentError(Base):
+    __tablename__ = "agent_errors"
+    id: Mapped[UUID] = mapped_column(
+        PGUUID,
+        primary_key=True,
+        default=uuid4,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    device_id: Mapped[UUID] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"), index=True
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    kind: Mapped[str] = mapped_column(String(64))
+    message: Mapped[str] = mapped_column(String(1024))
+    traceback: Mapped[str | None] = mapped_column(String, nullable=True)
+    agent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class Camera(Base):

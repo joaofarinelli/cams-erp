@@ -44,6 +44,11 @@ def log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+# Build-time identifier reported in heartbeats and crash reports so the
+# server can correlate bug fixes with the agent version that hit them.
+AGENT_VERSION = "1.0.0"
+
+
 # Suppress the console window that subprocess.Popen opens on Windows when the
 # parent is a GUI app (PyInstaller console=False). Without this, every ffmpeg
 # spawn flashes a CMD window.
@@ -161,7 +166,7 @@ def heartbeat_loop(
                 "cpu_pct": 0.0,
                 "ram_mb": 0,
                 "disk_free_mb": 0,
-                "agent_version": "dev-stub",
+                "agent_version": AGENT_VERSION,
             }
             r = httpx.post(
                 f"{cfg.api_base}/agent/heartbeat", json=payload, headers=headers, timeout=10
@@ -175,6 +180,19 @@ def heartbeat_loop(
                     last_etag = etag
         except Exception as e:
             log(f"heartbeat error: {e}")
+            try:
+                import crash_reporter
+
+                crash_reporter.report("heartbeat_error", e)
+            except Exception:  # noqa: BLE001
+                pass
+        # Best-effort drain of any errors buffered while offline.
+        try:
+            import crash_reporter
+
+            crash_reporter.heartbeat_flush()
+        except Exception:  # noqa: BLE001
+            pass
         stop.wait(cfg.heartbeat_interval)
 
 
@@ -575,6 +593,13 @@ class CameraWorker(threading.Thread):
                 self._run_rtsp_cv2()
         except Exception as e:  # noqa: BLE001
             log(f"[{self.name_pretty}] worker crashed: {e!r}")
+            import crash_reporter
+
+            crash_reporter.report(
+                "camera_worker_crash",
+                e,
+                {"camera_id": self.camera_id, "name": self.name_pretty},
+            )
         finally:
             self._healthy = False
 
@@ -772,7 +797,10 @@ class CameraWorkerPool:
 def run(cfg: AgentConfig) -> None:
     """Entry point. Spawns heartbeat + control WS + a CameraWorker per camera
     discovered via /agent/config. The pool auto-syncs on every etag change."""
-    log(f"agent starting api={cfg.api_base}")
+    log(f"agent starting api={cfg.api_base} version={AGENT_VERSION}")
+    import crash_reporter
+
+    crash_reporter.configure(cfg, AGENT_VERSION)
     refresh_agent_config(cfg)
 
     stop = threading.Event()

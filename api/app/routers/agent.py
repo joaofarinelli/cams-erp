@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Camera, Device, Rule
+from pydantic import BaseModel, Field
+
+from app.db.models import AgentError, Camera, Device, Rule
 from app.db.session import SessionLocal, get_db
 from app.schemas.agent import AgentConfigOut, CameraConfigItem, HeartbeatIn, HeartbeatOut
 from app.security.device_auth import get_current_device, verify_device_token
@@ -117,3 +119,48 @@ async def get_config(
         edge_yolo_enabled=device.edge_yolo_enabled,
         device_name=device.name,
     )
+
+
+class AgentErrorIn(BaseModel):
+    kind: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=1024)
+    traceback: str | None = Field(default=None, max_length=20000)
+    agent_version: str | None = Field(default=None, max_length=32)
+    context: dict | None = None
+
+
+@router.post("/errors", status_code=201)
+async def report_error(
+    payload: AgentErrorIn,
+    device: Device = Depends(get_current_device),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Receive a crash/error report from a remote agent.
+
+    Rate-limited to a soft 100/day per device via a quick count check —
+    extra rows are dropped silently (returns 202) so a noisy crash loop
+    doesn't blow up the table or DB write budget."""
+    from datetime import timedelta
+    from sqlalchemy import func as sa_func
+
+    since = datetime.now(tz=timezone.utc) - timedelta(days=1)
+    count = (
+        await db.execute(
+            sa_func.count(AgentError.id).select().where(
+                AgentError.device_id == device.id, AgentError.occurred_at >= since
+            )
+        )
+    ).scalar() or 0
+    if count >= 100:
+        return {"ok": True, "dropped": True}
+    err = AgentError(
+        device_id=device.id,
+        kind=payload.kind,
+        message=payload.message[:1024],
+        traceback=payload.traceback,
+        agent_version=payload.agent_version,
+        context=payload.context,
+    )
+    db.add(err)
+    await db.commit()
+    return {"ok": True, "id": str(err.id)}
