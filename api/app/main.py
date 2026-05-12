@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.routers import agent, alerts, auth, billing, cameras, clips, digest as digest_router, events, faces, onboarding, pairing, privacy, rules, subscribers, usage as usage_router, webhooks
 from app.services.account_purge import account_purge_scheduler
+from app.services.clip_retention import clip_retention_scheduler
 from app.services.digest import digest_scheduler
 from app.services.trial_expiry import trial_expiry_scheduler
 from app.services.usage_aggregator import usage_storage_aggregator
@@ -22,6 +23,7 @@ async def lifespan(app: FastAPI):
     tasks.append(asyncio.create_task(usage_storage_aggregator(), name="usage_aggregator"))
     tasks.append(asyncio.create_task(trial_expiry_scheduler(), name="trial_expiry"))
     tasks.append(asyncio.create_task(account_purge_scheduler(), name="account_purge"))
+    tasks.append(asyncio.create_task(clip_retention_scheduler(), name="clip_retention"))
     try:
         yield
     finally:
