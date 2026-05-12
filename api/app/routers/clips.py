@@ -82,6 +82,8 @@ class SeekBackIn(BaseModel):
 class SeekBackOut(BaseModel):
     s3_key: str
     frame_count: int
+    view_url: str
+    view_url_expires_in_seconds: int = 600
 
 
 @router.post("/seek-back", response_model=SeekBackOut)
@@ -136,4 +138,5 @@ async def seek_back(
     return SeekBackOut(
         s3_key=s3_key,
         frame_count=int(resp.get("result", {}).get("frame_count", 0)),
+        view_url=signed_get_url(s3_key),
     )

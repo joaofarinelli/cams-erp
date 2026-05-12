@@ -296,7 +296,7 @@ export async function seekBack(
   alertId: string,
   secondsBefore: number = 30,
   secondsAfter: number = 5,
-): Promise<{ s3_key: string; frame_count: number }> {
+): Promise<{ s3_key: string; frame_count: number; view_url: string }> {
   const r = await fetch(`${BASE}/clips/seek-back`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

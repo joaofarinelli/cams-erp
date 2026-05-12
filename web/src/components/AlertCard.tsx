@@ -24,8 +24,7 @@ export function AlertCard({ alert, onUpdate }: { alert: Alert; onUpdate: () => v
     setSeekError(null);
     try {
       const resp = await seekBack(alert.id, 30, 5);
-      const url = await clipUrl(resp.s3_key);
-      setSeekSrc(url);
+      setSeekSrc(resp.view_url);
     } catch (e) {
       setSeekError(e instanceof Error ? e.message : "Erro ao buscar contexto");
     } finally {
