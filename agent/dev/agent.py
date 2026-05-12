@@ -339,6 +339,77 @@ async def _handle_job(ws, msg: dict[str, Any]) -> None:
             await ws.send(
                 json.dumps({"job_id": job_id, "ok": True, "result": {"local_devices": local}})
             )
+        elif type_ == "seek_clip":
+            # Rebuild a clip from the local ring buffer between two
+            # timestamps and POST it to the upload-url the API gave us.
+            # Used by web "Ver 30s antes" — agent has the frames; cloud
+            # provides the S3 PUT URL and event metadata.
+            from buffer import RingBuffer
+
+            cam_id = str(params.get("camera_id") or "")
+            from_ts = float(params.get("from_ts") or 0)
+            to_ts = float(params.get("to_ts") or 0)
+            upload_url = params.get("upload_url")
+            if not cam_id or to_ts <= from_ts or not upload_url:
+                await ws.send(
+                    json.dumps(
+                        {"job_id": job_id, "ok": False, "error": "bad_params"}
+                    )
+                )
+                return
+            buf = RingBuffer(cam_id)
+            frames = buf.slice(from_ts, to_ts)
+            if not frames:
+                await ws.send(
+                    json.dumps(
+                        {"job_id": job_id, "ok": False, "error": "no_frames_in_window"}
+                    )
+                )
+                return
+            tmp = Path(tempfile.mkstemp(suffix=".mp4")[1])
+            fps = max(1.0, len(frames) / max(1.0, (to_ts - from_ts)))
+            cmd = [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-f", "image2pipe", "-framerate", f"{fps:.2f}", "-vcodec", "mjpeg",
+                "-i", "-",
+                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", str(tmp),
+            ]
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, creationflags=_SUBPROCESS_FLAGS
+            )
+            assert proc.stdin is not None
+            try:
+                for _, jpeg in frames:
+                    proc.stdin.write(jpeg)
+            finally:
+                proc.stdin.close()
+                proc.wait(timeout=15)
+            try:
+                with tmp.open("rb") as f:
+                    r = httpx.put(
+                        upload_url,
+                        content=f.read(),
+                        headers={"Content-Type": "video/mp4"},
+                        timeout=60,
+                    )
+                ok = r.status_code in (200, 204)
+            finally:
+                for _ in range(5):
+                    try:
+                        tmp.unlink(missing_ok=True)
+                        break
+                    except PermissionError:
+                        time.sleep(0.3)
+            await ws.send(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "ok": ok,
+                        "result": {"frame_count": len(frames), "from_ts": from_ts, "to_ts": to_ts},
+                    }
+                )
+            )
         elif type_ == "bulk_probe":
             # Wizard sends a list of {ip, vendor} + a master credentials list;
             # for each IP we try every known template until one returns a
@@ -656,6 +727,11 @@ class CameraWorker(threading.Thread):
         # hamming distance against `_DEDUP_THRESHOLD` and `_DEDUP_WINDOW_S`.
         self._last_phash: int | None = None
         self._last_phash_at: float = 0.0
+        # Local 24h ring of every captured frame, so the cloud can ask for
+        # "30s before alert X" after the fact. Cheap (~256MB/cam by default).
+        from buffer import RingBuffer
+
+        self._buffer = RingBuffer(self.camera_id)
 
     @property
     def healthy(self) -> bool:
@@ -724,6 +800,7 @@ class CameraWorker(threading.Thread):
             if jpeg is None:
                 self._stop.wait(interval)
                 continue
+            self._buffer.write(jpeg)
             arr = np.frombuffer(jpeg, dtype=np.uint8)
             frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             if frame is None:
