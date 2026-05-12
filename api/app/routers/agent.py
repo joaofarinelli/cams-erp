@@ -72,9 +72,10 @@ async def heartbeat(
     device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
 ) -> HeartbeatOut:
-    device_vals: dict = {"last_heartbeat_at": datetime.now(tz=timezone.utc)}
-    if payload.agent_version:
-        device_vals["agent_version"] = payload.agent_version
+    device_vals: dict = {
+        "last_heartbeat_at": datetime.now(tz=timezone.utc),
+        "agent_version": payload.agent_version or None,
+    }
     if payload.self_test is not None:
         device_vals["last_self_test_json"] = payload.self_test
     if payload.tailscale is not None:
