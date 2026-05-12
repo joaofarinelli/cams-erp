@@ -72,6 +72,7 @@ async def heartbeat(
     device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
 ) -> HeartbeatOut:
+    device = await db.get(Device, device.id)
     device.last_heartbeat_at = datetime.now(tz=timezone.utc)
     if payload.agent_version:
         device.agent_version = payload.agent_version
