@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { CookieBanner } from "./components/CookieBanner";
+import { LegalModal } from "./components/LegalModal";
+import type { LegalPage } from "./components/LegalModal";
 import {
   Alert,
   AlertFilters,
@@ -70,6 +73,7 @@ export function App() {
 
 function Authenticated({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("alerts");
+  const [legalPage, setLegalPage] = useState<LegalPage | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
@@ -182,7 +186,7 @@ function Authenticated({ user, onLogout }: { user: AuthUser; onLogout: () => voi
           <ThemeToggle />
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto p-6 flex flex-col">
           {tab === "alerts" && (
             <div className="mx-auto max-w-5xl space-y-4">
               <AlertsFilters
@@ -207,8 +211,16 @@ function Authenticated({ user, onLogout }: { user: AuthUser; onLogout: () => voi
           {tab === "faces" && <FacesPanel />}
           {tab === "pricing" && <PricingPage />}
           {tab === "billing" && <BillingPage />}
+          <footer className="border-t border-border mt-8 py-4 text-center text-xs text-muted-foreground space-x-4">
+            <button onClick={() => setLegalPage("privacy")} className="hover:underline">Privacidade</button>
+            <button onClick={() => setLegalPage("terms")} className="hover:underline">Termos</button>
+            <button onClick={() => setLegalPage("subprocessors")} className="hover:underline">Sub-processadores</button>
+            <span>© 2026 cams-erp · v1.0</span>
+          </footer>
         </main>
       </div>
+      <CookieBanner onOpenPrivacy={() => setLegalPage("privacy")} />
+      <LegalModal page={legalPage} onClose={() => setLegalPage(null)} />
     </div>
   );
 }
