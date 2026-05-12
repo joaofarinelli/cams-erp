@@ -46,7 +46,7 @@ def log(msg: str) -> None:
 
 # Build-time identifier reported in heartbeats and crash reports so the
 # server can correlate bug fixes with the agent version that hit them.
-AGENT_VERSION = "1.0.0"
+AGENT_VERSION = "1.2.0"
 
 
 # Suppress the console window that subprocess.Popen opens on Windows when the
