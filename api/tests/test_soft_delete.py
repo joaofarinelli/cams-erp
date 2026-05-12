@@ -133,7 +133,7 @@ async def test_restore_within_grace_period(db_session: AsyncSession, seed_user: 
     # User can authenticate again
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         r2 = await client.get("/me/export", headers={"Authorization": f"Bearer {token}"})
-    assert r2.status_code == 200
+    assert r2.status_code == 202  # export returns 202 (async) since B.2
 
     get_settings.cache_clear()
 
