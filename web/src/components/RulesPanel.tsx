@@ -20,6 +20,7 @@ type FormDraft = {
   customPrompt: string;
   zones: Zones;
   sensitivity: number;
+  yoloRequired: boolean;
   schedule: Schedule | null;
 };
 
@@ -29,6 +30,7 @@ const empty = (cameras: Camera[]): FormDraft => ({
   customPrompt: "",
   zones: {},
   sensitivity: 50,
+  yoloRequired: true,
   schedule: null,
 });
 
@@ -46,6 +48,7 @@ export function RulesPanel({ cameras, rules, onChange }: { cameras: Camera[]; ru
       customPrompt: rule.custom_prompt ?? "",
       zones: rule.zones ?? {},
       sensitivity: rule.sensitivity ?? 50,
+      yoloRequired: rule.yolo_required ?? true,
       schedule: rule.schedule ?? null,
     });
     setEditingId(rule.id); setError(null);
@@ -64,9 +67,9 @@ export function RulesPanel({ cameras, rules, onChange }: { cameras: Camera[]; ru
     setSaving(true); setError(null);
     try {
       if (editingId === "new") {
-        await createRule({ camera_id: draft.cameraId, name: draft.name || undefined, custom_prompt: draft.customPrompt.trim(), zones: validZones, sensitivity: draft.sensitivity, schedule: draft.schedule });
+        await createRule({ camera_id: draft.cameraId, name: draft.name || undefined, custom_prompt: draft.customPrompt.trim(), zones: validZones, sensitivity: draft.sensitivity, yolo_required: draft.yoloRequired, schedule: draft.schedule });
       } else if (editingId) {
-        await updateRule(editingId, { name: draft.name || null, custom_prompt: draft.customPrompt.trim(), zones: validZones, sensitivity: draft.sensitivity, schedule: draft.schedule });
+        await updateRule(editingId, { name: draft.name || null, custom_prompt: draft.customPrompt.trim(), zones: validZones, sensitivity: draft.sensitivity, yolo_required: draft.yoloRequired, schedule: draft.schedule });
       }
       close(); onChange();
     } catch (e) { setError(String(e)); } finally { setSaving(false); }
@@ -134,6 +137,20 @@ export function RulesPanel({ cameras, rules, onChange }: { cameras: Camera[]; ru
                   className="w-full accent-primary"
                 />
                 <p className="text-xs text-muted-foreground">Mais alto = mais frames passam pelo VLM (mais custo).</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="yolo-required">Exigir detecção de pessoa (YOLO)</Label>
+                  <Switch
+                    id="yolo-required"
+                    checked={draft.yoloRequired}
+                    onCheckedChange={(v) => setDraft({ ...draft, yoloRequired: v })}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Desative para alertar em todos os clipes — maior custo, menos perdas. Útil quando a câmera está em ângulo que dificulta o detector de pessoa (ex: teto, distante).
+                </p>
               </div>
 
               <div className="space-y-1.5">

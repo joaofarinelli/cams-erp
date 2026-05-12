@@ -17,6 +17,7 @@ export type Rule = {
   zones: Record<string, [number, number][]>;
   sensitivity: number;
   cooldown_seconds: number;
+  yolo_required: boolean;
   custom_prompt: string;
   schedule: Schedule | null;
   created_at: string;
@@ -186,6 +187,7 @@ export async function createRule(input: {
   custom_prompt: string;
   zones?: Rule["zones"];
   sensitivity?: number;
+  yolo_required?: boolean;
   schedule?: Schedule | null;
 }): Promise<Rule> {
   const r = await fetch(`${BASE}/rules`, {
@@ -199,7 +201,7 @@ export async function createRule(input: {
 
 export async function updateRule(
   ruleId: string,
-  patch: Partial<Pick<Rule, "name" | "enabled" | "zones" | "sensitivity" | "cooldown_seconds" | "custom_prompt" | "schedule">>
+  patch: Partial<Pick<Rule, "name" | "enabled" | "zones" | "sensitivity" | "cooldown_seconds" | "yolo_required" | "custom_prompt" | "schedule">>
 ): Promise<Rule> {
   const r = await fetch(`${BASE}/rules/${ruleId}`, {
     method: "PUT",

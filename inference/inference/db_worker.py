@@ -104,7 +104,8 @@ def fetch_rules(conn, camera_id: str) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, name, enabled, zones, sensitivity, custom_prompt, schedule, analysis_intensity
+            SELECT id, name, enabled, zones, sensitivity, custom_prompt, schedule,
+                   analysis_intensity, yolo_required
             FROM rules WHERE camera_id = %s AND enabled = true
             """,
             (camera_id,),
@@ -185,6 +186,9 @@ def process_event(event: dict, *, conn, s3, bucket: str, api_base: str, token: s
         log(f"  download failed key={event['s3_key']}: {e!r}")
         return
 
+    debug_max_conf: float | None = None
+    debug_reason: str | None = None
+    any_vlm_call = False
     try:
         for rule in rules:
             if not _is_active_now(rule.get("schedule")):
@@ -193,13 +197,14 @@ def process_event(event: dict, *, conn, s3, bucket: str, api_base: str, token: s
             yolo_conf = _yolo_confidence_from_sensitivity(rule.get("sensitivity"))
             intensity = rule.get("analysis_intensity") or "normal"
             label = rule.get("name") or "sem nome"
-            log(f"  scoring rule={rule['id']} name={label!r} yolo_conf={yolo_conf} intensity={intensity}")
+            effective_yolo = yolo_filter and bool(rule.get("yolo_required", True))
+            log(f"  scoring rule={rule['id']} name={label!r} yolo_conf={yolo_conf} intensity={intensity} yolo_filter={effective_yolo}")
             try:
                 result = score_clip(
                     str(clip_path),
                     rule.get("custom_prompt") or "",
                     rule.get("zones") or {},
-                    yolo_filter=yolo_filter,
+                    yolo_filter=effective_yolo,
                     yolo_confidence=yolo_conf,
                     intensity=intensity,
                 )
@@ -207,6 +212,17 @@ def process_event(event: dict, *, conn, s3, bucket: str, api_base: str, token: s
                 log(f"  vlm error: {e!r}")
                 continue
             log(f"    alert={result.alert} score={result.score:.2f} msg={result.message[:160]}")
+            # Per-event observability: track max yolo conf seen, and last
+            # skip reason. If at least one rule actually reached the VLM
+            # (skipped_reason is None), we clear the reason for the event.
+            if result.yolo_max_conf is not None and (
+                debug_max_conf is None or result.yolo_max_conf > debug_max_conf
+            ):
+                debug_max_conf = result.yolo_max_conf
+            if result.skipped_reason is None:
+                any_vlm_call = True
+            else:
+                debug_reason = result.skipped_reason
             if owner_id and (result.tokens_in or result.tokens_out):
                 post_usage(
                     api_base,
@@ -236,6 +252,21 @@ def process_event(event: dict, *, conn, s3, bucket: str, api_base: str, token: s
             except httpx.HTTPError as e:
                 log(f"    alert post failed: {e!r}")
     finally:
+        if debug_max_conf is not None or debug_reason is not None:
+            final_reason = None if any_vlm_call else debug_reason
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE events SET yolo_max_conf=%s, vlm_skipped_reason=%s WHERE id=%s",
+                        (debug_max_conf, final_reason, event["id"]),
+                    )
+                    conn.commit()
+            except Exception as e:  # noqa: BLE001
+                log(f"  events debug write failed: {e!r}")
+                try:
+                    conn.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
         try:
             clip_path.unlink(missing_ok=True)
         except Exception:  # noqa: BLE001

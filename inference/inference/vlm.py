@@ -36,6 +36,8 @@ class AlertResult(BaseModel):
     tokens_in: int = 0
     tokens_out: int = 0
     cascade_used: bool = False
+    yolo_max_conf: float | None = None
+    skipped_reason: str | None = None
 
 
 def sample_frames(clip_path: str, n: int = 4) -> list[np.ndarray]:
@@ -265,6 +267,32 @@ def _run_vlm(
         return r
 
 
+def _sample_frames_uniform(clip_path: str, n: int) -> list[np.ndarray]:
+    """Uniform-time sampling. Used together with motion-peak sampling when YOLO
+    pre-filter is disabled, to raise the chance of catching a slow-entering
+    person whose presence isn't a motion peak."""
+    if n <= 0:
+        return []
+    cap = cv2.VideoCapture(clip_path)
+    if not cap.isOpened():
+        return []
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total <= 0:
+        cap.release()
+        return []
+    indices = (
+        [int(i * (total - 1) / max(n - 1, 1)) for i in range(n)] if n > 1 else [total // 2]
+    )
+    out: list[np.ndarray] = []
+    for idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ok, frame = cap.read()
+        if ok:
+            out.append(frame)
+    cap.release()
+    return out
+
+
 def score_clip(
     clip_path: str,
     custom_prompt: str,
@@ -284,7 +312,16 @@ def score_clip(
     profile = _INTENSITY_PROFILES.get(intensity, _INTENSITY_PROFILES["normal"])
     effective_n = n_frames if n_frames is not None else profile["n_frames"]
 
-    frames = sample_frames_motion_peak(clip_path, n=effective_n)
+    if yolo_filter:
+        frames = sample_frames_motion_peak(clip_path, n=effective_n)
+    else:
+        # Mix motion-peak with uniform-time samples so we catch slow entries
+        # (which don't register as motion peaks). Dedup picks unique frames
+        # by id() since frames are independent ndarrays.
+        half = max(1, effective_n // 2)
+        peak = sample_frames_motion_peak(clip_path, n=half)
+        uniform = _sample_frames_uniform(clip_path, n=effective_n - len(peak))
+        frames = (peak + uniform)[:effective_n]
     if not frames:
         return AlertResult(alert=False, score=0.0, message="no frames extracted from clip")
 
@@ -297,6 +334,8 @@ def score_clip(
                 alert=False,
                 score=0.0,
                 message=f"yolo: no person in zone (max_conf={max_conf:.2f}); skipped VLM",
+                yolo_max_conf=float(max_conf),
+                skipped_reason="yolo_no_person",
             )
 
     if client is None:

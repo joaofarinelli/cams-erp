@@ -47,6 +47,7 @@ async def create_rule(
         zones=payload.zones,
         sensitivity=payload.sensitivity,
         cooldown_seconds=payload.cooldown_seconds,
+        yolo_required=payload.yolo_required,
         custom_prompt=payload.custom_prompt,
         schedule=payload.schedule,
         analysis_intensity=payload.analysis_intensity,
@@ -84,7 +85,7 @@ async def update_rule(
                 status.HTTP_403_FORBIDDEN,
                 f"intensity '{payload.analysis_intensity}' not allowed on tier '{user.tier}'",
             )
-    for field in ("name", "enabled", "zones", "sensitivity", "cooldown_seconds", "custom_prompt", "schedule", "analysis_intensity"):
+    for field in ("name", "enabled", "zones", "sensitivity", "cooldown_seconds", "yolo_required", "custom_prompt", "schedule", "analysis_intensity"):
         v = getattr(payload, field)
         if v is not None:
             setattr(rule, field, v)
